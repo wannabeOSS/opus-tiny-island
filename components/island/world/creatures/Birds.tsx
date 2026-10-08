@@ -15,12 +15,13 @@ import { merge, place, prep } from "../../lib/geo";
 import { mulberry32 } from "../../lib/math";
 import { height } from "../../lib/terrain";
 import { landCrumbs } from "../../lib/tools";
-import { markInput, on, sfx, world, type Perch } from "../../lib/world";
+import { emit, markInput, on, sfx, world, type Perch } from "../../lib/world";
+import { bubbles, popNear } from "../Bubbles";
 import { hoverable } from "../cursor";
 import { spawnSparkle } from "../effects/Particles";
 
 type BirdState = "perch" | "fly" | "peck" | "away";
-type Goal = "perch" | "crumb" | "away";
+type Goal = "perch" | "crumb" | "away" | "bubble";
 
 type Bird = {
   state: BirdState;
@@ -184,6 +185,27 @@ export function Birds() {
         });
       }),
       on("lightning", () => birds.forEach((b) => flee(b))),
+      on("conch", () => {
+        if (world.w.storm > 0.5) return;
+        let answered = 0;
+        birds.forEach((b, i) => {
+          if (b.state === "away" || b.state === "fly") return;
+          answered++;
+          const sleepy = world.night > 0.75;
+          setTimeout(() => {
+            b.hop = 1;
+            b.peck = 1;
+            sfx("chirp", b.pos, sleepy ? 0.35 : 0.7, 0.85 + i * 0.09 + Math.random() * 0.15);
+            if (!sleepy) setTimeout(() => sfx("chirp", b.pos, 0.5, 1 + Math.random() * 0.3), 380);
+          }, 500 + i * 260 + Math.random() * 300);
+        });
+        // nobody home? in daylight one of them comes back to see who's calling
+        if (!answered && world.daylight > 0.3) {
+          const b = birds.find((x) => x.state === "away");
+          if (b) b.awayFor = Math.min(b.awayFor, 0.6);
+        }
+        if (answered) setTimeout(() => emit("conchAnswer", { who: "birds" }), 900);
+      }),
     ];
     return () => {
       offs.forEach((o) => o());
@@ -237,12 +259,22 @@ export function Birds() {
         const dx = b.pos.x - tmp.x;
         const dz = b.pos.z - tmp.z;
         if (dx * dx + dz * dz > 1e-7) b.heading = Math.atan2(dx, dz);
+        if (bubbles.length) popNear(b.pos, 0.18);
         const descending = b.pos.y < tmp.y;
         flap = descending && k > 0.3 && k < 0.85 ? 0.35 : Math.sin(t * 34 + i) * 0.95;
         if (k >= 1) {
           if (b.goal === "away") {
             b.state = "away";
             b.awayFor = storm ? 30 : 10 + Math.random() * 18;
+          } else if (b.goal === "bubble") {
+            if (popNear(b.pos, 0.55)) sfx("chirp", b.pos, 0.45, 1.4);
+            const free = freePerches();
+            if (free.length && !storm) {
+              const p = free[Math.floor(Math.random() * free.length)];
+              p.taken = true;
+              birdsApi.flyTo(b, p.pos, "perch");
+              b.perch = p;
+            } else birdsApi.flyTo(b, awayPoint(), "away");
           } else if (b.goal === "crumb") {
             b.state = "peck";
             b.timer = 0.6;
@@ -258,8 +290,14 @@ export function Birds() {
         } else if (b.timer < 0) {
           b.timer = 1.5 + Math.random() * 4;
           const crumb = !asleep && landCrumbs.length ? nearestCrumb(b.pos, 14) : null;
+          const bubble = !asleep ? bubbles.find((x) => !x.dead && !x.hunted && x.age > 0.8 && x.pos.distanceTo(b.pos) < 4.5) : undefined;
           const r = Math.random();
-          if (crumb && Math.random() < 0.8) {
+          if (bubble && Math.random() < 0.6) {
+            bubble.hunted = true;
+            // aim a little ahead of where it's drifting
+            const lead = bubble.pos.clone().addScaledVector(bubble.vel, 0.6 + bubble.pos.distanceTo(b.pos) / 4.2);
+            birdsApi.flyTo(b, lead, "bubble");
+          } else if (crumb && Math.random() < 0.8) {
             const c = crumb.pos;
             const to = new Vector3(c.x + (Math.random() - 0.5) * 0.3, 0, c.z + (Math.random() - 0.5) * 0.3);
             to.y = height(to.x, to.z) + 0.02;

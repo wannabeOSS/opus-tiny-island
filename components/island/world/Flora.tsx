@@ -4,6 +4,7 @@ import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import {
   BufferGeometry,
+  CapsuleGeometry,
   Color,
   CylinderGeometry,
   InstancedMesh,
@@ -20,7 +21,7 @@ import { merge, place, prep } from "../lib/geo";
 import { BOUNCY_MUSHROOM, FLOWER_PATCHES, OLD_TREE, ROUND_TREES, SEA_STACKS, CLIFF } from "../lib/layout";
 import { mulberry32, noise2, smoothstep } from "../lib/math";
 import { patchMaterial } from "../lib/patch";
-import { distToPath, height, islandD } from "../lib/terrain";
+import { distToPath, groundMin, height, islandD } from "../lib/terrain";
 import { emit, markInput, on, sfx, world } from "../lib/world";
 import { hoverable } from "./cursor";
 import { pools, spawnDust, spawnPetals, spawnSparkle } from "./effects/Particles";
@@ -124,7 +125,7 @@ export function Flowers() {
     const g = f.grow;
     const ease = g >= 1 ? 1 : 1 - Math.pow(1 - g, 3) + Math.sin(g * Math.PI) * 0.25;
     const bob = Math.sin(f.bob * 18) * f.bob * 0.25;
-    dummy.position.set(f.x, f.y - 0.01, f.z);
+    dummy.position.set(f.x, f.y - 0.025, f.z);
     dummy.rotation.set(f.tilt + bob, f.rot, f.tilt * 0.5);
     const budScale = f.sprout === undefined ? 1 : 0.32 + f.sprout * 0.3;
     dummy.scale.setScalar(Math.max(0.001, f.s * ease * budScale));
@@ -165,10 +166,10 @@ export function Flowers() {
         });
       }
     });
-    const offSprout = on("plantSprout", ({ pos }) => {
+    const offSprout = on("plantSprout", ({ pos, color: tint }) => {
       if (flowers.length >= MAX_FLOWERS) flowers.splice(60, 1);
       const rnd = Math.random;
-      const color = new Color(FLOWER_COLORS[Math.floor(rnd() * FLOWER_COLORS.length)]);
+      const color = new Color(tint ?? FLOWER_COLORS[Math.floor(rnd() * FLOWER_COLORS.length)]);
       flowers.push({ x: pos.x, y: height(pos.x, pos.z), z: pos.z, s: 0.17 + rnd() * 0.12, rot: rnd() * 6, tilt: (rnd() - 0.5) * 0.25, grow: 0, bob: 0, color, sprout: 0 });
       spawnDust(pos, new Color("#7a6040"), 0.3);
       sfx("pop", pos, 0.5, 1.3 + rnd() * 0.3);
@@ -186,10 +187,24 @@ export function Flowers() {
       }
       dirty.current = true;
     });
+    const offSun = on("sunbeam", ({ pos, night }) => {
+      if (night) return;
+      for (const f of flowers) {
+        if (Math.abs(f.x - pos.x) > 0.8 || Math.abs(f.z - pos.z) > 0.8) continue;
+        if (Math.hypot(f.x - pos.x, f.z - pos.z) > 0.8) continue;
+        if (f.sprout !== undefined) f.sprout += 0.035;
+        else {
+          f.bob = Math.max(f.bob, 0.2);
+          f.s = Math.min(0.4, f.s + 0.0015);
+        }
+      }
+      dirty.current = true;
+    });
     return () => {
       offTap();
       offSprout();
       offWater();
+      offSun();
     };
   }, [flowers]);
 
@@ -288,7 +303,7 @@ function Mushroom({ m, i }: { m: Shroom; i: number }) {
   const ref = useRef<Object3D>(null);
   const capMat = useRef<MeshStandardMaterial>(null);
   const squish = useRef(0);
-  const y = useMemo(() => height(m.x, m.z), [m]);
+  const y = useMemo(() => groundMin(m.x, m.z, 0.06 * m.s) - 0.01, [m]);
   const capGeo = useMemo(() => {
     const g = new SphereGeometry(0.11, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
     g.scale(1, 0.75, 1);
@@ -474,7 +489,7 @@ export function Rocks() {
           key={i}
           geometry={geos[i]}
           material={rockMat}
-          position={[r.x, height(r.x, r.z) - (r.sink ?? 0.05) - r.r * 0.1, r.z]}
+          position={[r.x, groundMin(r.x, r.z, r.r * 0.8) - (r.sink ?? 0.04) - r.r * 0.08, r.z]}
           rotation-y={r.seed}
           castShadow
           receiveShadow
@@ -485,32 +500,64 @@ export function Rocks() {
   );
 }
 
+/** One continuous weathered rock column rising out of the sea, rooted well below the waterline. */
+function pillarGeo(seed: number, r: number, top: number) {
+  const bottom = -3.2;
+  const len = top - bottom - r * 1.2;
+  const cap = new CapsuleGeometry(r, len, 5, 14);
+  cap.deleteAttribute("normal");
+  cap.deleteAttribute("uv");
+  const g = mergeVertices(cap);
+  cap.dispose();
+  g.translate(0, bottom + r * 0.6 + len / 2, 0);
+  const pos = g.attributes.position as BufferAttribute;
+  const v = new Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const t = (v.y - bottom) / (top - bottom);
+    const a = Math.atan2(v.z, v.x);
+    // wider at the waterline, leaning a touch, with horizontal strata and chiselled facets
+    const taper = 1.18 - t * 0.38;
+    const strata = 1 + Math.sin(v.y * 4.2 + seed) * 0.05 + (Math.round(v.y * 2.4) % 2 === 0 ? 0.03 : -0.02);
+    const lump = 1 + noise2(Math.cos(a) * 1.6 + seed, v.y * 0.7) * 0.2 + noise2(Math.cos(a) * 4 + seed * 2, Math.sin(a) * 4 + v.y) * 0.06;
+    const k = taper * strata * lump;
+    v.x = v.x * k + t * t * 0.18 * Math.sin(seed);
+    v.z = v.z * k + t * t * 0.18 * Math.cos(seed);
+    if (v.y > top - r * 0.7) v.y = top - r * 0.7 + (v.y - (top - r * 0.7)) * 0.55;
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  const nrm = g.attributes.normal as BufferAttribute;
+  const base = new Color("#b88a6c");
+  const dark = new Color("#6f5444");
+  const mossC = new Color("#7d9a48");
+  const c = new Color();
+  const colors = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    c.copy(base).offsetHSL(0, 0, noise2(v.x * 3 + seed, v.y * 5) * 0.06 + Math.sin(v.y * 4.2 + seed) * 0.03);
+    // wet, darker band where the waves wash
+    c.lerp(dark, smoothstep(0.55, -0.2, v.y) * 0.7);
+    c.lerp(mossC, smoothstep(0.55, 0.9, nrm.getY(i)) * smoothstep(top - 1.2, top - 0.3, v.y) * 0.9);
+    colors.set([c.r, c.g, c.b], i * 3);
+  }
+  g.setAttribute("color", new BufferAttribute(colors, 3));
+  return g;
+}
+
+const stackTop = (s: (typeof SEA_STACKS)[number]) => -1.2 + s.h + s.r * 0.4;
+
 function SeaStacks() {
-  const stacks = useMemo(
-    () =>
-      SEA_STACKS.map((s) => {
-        const parts: BufferGeometry[] = [];
-        const levels = Math.max(2, Math.round(s.h / 1.1));
-        for (let i = 0; i < levels; i++) {
-          const t = i / Math.max(1, levels - 1);
-          const r = s.r * (1 - t * 0.3);
-          const g = rockGeo(s.seed * 10 + i, r, (s.h / levels) / r * 0.95, "#b88a6c", i === levels - 1 ? 0.8 : 0.05);
-          place(g, [Math.sin(i * 1.7) * 0.1, -1.0 + (t * (s.h - 0.6)), Math.cos(i * 2.3) * 0.1], [0, i * 1.3, 0]);
-          parts.push(g);
-        }
-        return merge(parts);
-      }),
-    [],
-  );
+  const stacks = useMemo(() => SEA_STACKS.map((s) => pillarGeo(s.seed * 3.1, s.r, stackTop(s))), []);
   useEffect(() => {
     const perches = SEA_STACKS.slice(0, 2).map((s, i) => ({
       id: `stack-${i}`,
-      pos: new Vector3(s.x, -1.2 + s.h + s.r * 0.6, s.z),
+      pos: new Vector3(s.x, stackTop(s) - s.r * 0.3, s.z),
       taken: false,
     }));
     world.perches.push(...perches);
     const offs = SEA_STACKS.map((s, i) =>
-      addCollider({ id: `stack-${i}`, x: s.x, z: s.z, r: s.r, bottom: -3, top: -1.2 + s.h + s.r * 0.5, surface: "rock" }),
+      addCollider({ id: `stack-${i}`, x: s.x, z: s.z, r: s.r, bottom: -3, top: stackTop(s) - s.r * 0.3, surface: "rock" }),
     );
     return () => {
       world.perches = world.perches.filter((p) => !perches.includes(p));

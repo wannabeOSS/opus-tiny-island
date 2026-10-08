@@ -19,7 +19,7 @@ import { blob, merge, place, prep, trunk } from "../lib/geo";
 import { LIGHTHOUSE } from "../lib/layout";
 import { clamp, smoothstep } from "../lib/math";
 import { discover } from "../lib/secrets";
-import { height } from "../lib/terrain";
+import { groundMin } from "../lib/terrain";
 import { emit, markInput, on, sfx, world } from "../lib/world";
 import { hoverable } from "./cursor";
 import { spawnPetals, spawnSparkle } from "./effects/Particles";
@@ -77,7 +77,7 @@ function buildTree() {
 export function MysteryTree() {
   const [pos, setPos] = useState<Vector3 | null>(null);
   useEffect(() => {
-    return on("seedPlanted", ({ pos: p }) => setPos(new Vector3(p.x, height(p.x, p.z), p.z)));
+    return on("seedPlanted", ({ pos: p }) => setPos(new Vector3(p.x, groundMin(p.x, p.z, 0.22) - 0.02, p.z)));
   }, []);
   return (
     <>
@@ -121,10 +121,13 @@ function Tree({ pos }: { pos: Vector3 }) {
     const st = s.current;
     sfx("grow", pos, 0.8, 1);
     spawnSparkle(pos.clone().add(new Vector3(0, 0.1, 0)), 20, MINT, 0.3, 1.2);
-    emit("hint", { text: "it likes water, weather and a little company" });
+    emit("hint", { text: "it likes rain, sunshine and a little company" });
     const offs = [
       on("watered", ({ pos: p }) => {
         if (Math.hypot(p.x - pos.x, p.z - pos.z) < 1.3) st.g = Math.min(1, st.g + 0.0018);
+      }),
+      on("sunbeam", ({ pos: p, night }) => {
+        if (!night && Math.hypot(p.x - pos.x, p.z - pos.z) < 1.4) st.g = Math.min(1, st.g + 0.0022);
       }),
       on("lightning", ({ target }) => {
         if (target && target.distanceTo(pos) < 4) st.g = Math.min(1, st.g + 0.05);
@@ -274,7 +277,7 @@ function Tree({ pos }: { pos: Vector3 }) {
 const MOON_SPOT = (() => {
   const x = LIGHTHOUSE.x - 1.05;
   const z = LIGHTHOUSE.z + 0.75;
-  return new Vector3(x, height(x, z), z);
+  return new Vector3(x, groundMin(x, z, 0.12) - 0.01, z);
 })();
 
 function petalGeo() {

@@ -16,12 +16,30 @@ export type Collider = {
 
 export const colliders: Collider[] = [];
 
+const listeners = new Set<() => void>();
+let version = 0;
+const changed = () => {
+  version++;
+  listeners.forEach((l) => l());
+};
+export const getCollidersVersion = () => version;
+export function subscribeColliders(l: () => void) {
+  listeners.add(l);
+  return () => {
+    listeners.delete(l);
+  };
+}
+
 export function addCollider(c: Collider) {
   const i = colliders.findIndex((o) => o.id === c.id);
   if (i >= 0) colliders[i] = c;
   else colliders.push(c);
+  changed();
   return () => {
     const j = colliders.indexOf(c);
-    if (j >= 0) colliders.splice(j, 1);
+    if (j >= 0) {
+      colliders.splice(j, 1);
+      changed();
+    }
   };
 }

@@ -14,7 +14,9 @@ export type SecretId =
   | "rainbow"
   | "moonflower"
   | "temper"
-  | "bounce";
+  | "bounce"
+  | "chorus"
+  | "pocketStorm";
 
 export type Secret = { id: SecretId; title: string; note: string; clue: string };
 
@@ -22,7 +24,7 @@ export const SECRETS: Secret[] = [
   { id: "timekeeper", title: "Time keeper", note: "The sun can be moved by hand.", clue: "Something in the sky can be held." },
   { id: "bottle", title: "Message in a bottle", note: "The tide brought a bottle with a seed inside.", clue: "Watch the shoreline." },
   { id: "lanternTree", title: "The lantern tree", note: "The seed grew into a tree of singing lights.", clue: "Some seeds want rain, sun and company." },
-  { id: "goldfish", title: "Golden fish", note: "Fed enough, a golden fish came to visit.", clue: "Someone in the lagoon is hungry." },
+  { id: "goldfish", title: "Golden fish", note: "Fed enough, a golden fish came to visit.", clue: "Someone in the lagoon is hungry, and loves bubbles." },
   { id: "whale", title: "Old friend", note: "Three flashes of the lighthouse at night called a whale.", clue: "The lighthouse talks to the deep at night." },
   { id: "visitor", title: "A quiet visitor", note: "Stay still long enough and a rabbit comes out.", clue: "Patience is rewarded." },
   { id: "wish", title: "A wish", note: "Touching the moon sends a shooting star.", clue: "Reach for the moon." },
@@ -33,6 +35,8 @@ export const SECRETS: Secret[] = [
   { id: "moonflower", title: "Moonflower", note: "The pale bud by the lighthouse opens when watered at night.", clue: "A bud on the cliff is thirsty after dark." },
   { id: "temper", title: "Short temper", note: "Poke a raining cloud enough and it throws lightning.", clue: "Clouds don't like to be poked." },
   { id: "bounce", title: "Boing", note: "The big red mushroom is very bouncy.", clue: "Throw something at the big mushroom." },
+  { id: "chorus", title: "Island chorus", note: "Blow the conch and the whole island sings back.", clue: "Call out when everyone is awake." },
+  { id: "pocketStorm", title: "Storm in a pocket", note: "Keep a pocket cloud raining long enough and it crackles.", clue: "Even a small cloud has a temper." },
 ];
 
 type Listener = (id: SecretId | null) => void;

@@ -2,6 +2,7 @@
 
 import { Bvh } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
+import { Suspense } from "react";
 import { ACESFilmicToneMapping, SRGBColorSpace } from "three";
 import { world } from "./lib/world";
 import { CameraRig } from "./systems/CameraRig";
@@ -17,6 +18,7 @@ import { Cabin } from "./world/Cabin";
 import { Lighthouse } from "./world/Lighthouse";
 import { Boat, Buoy, Dock, Laundry } from "./world/Shore";
 import { Props } from "./world/Props";
+import { PhysicsWorld } from "./world/PhysicsWorld";
 import { Pond } from "./world/Pond";
 import { SkyToys } from "./world/SkyToys";
 import { Weather } from "./world/Weather";
@@ -27,6 +29,7 @@ import { Bugs } from "./world/creatures/Bugs";
 import { Critters } from "./world/creatures/Critters";
 import { Whale } from "./world/creatures/Whale";
 import { Tools } from "./systems/Tools";
+import { Bubbles } from "./world/Bubbles";
 import { Sound } from "./systems/Sound";
 
 export default function Experience() {
@@ -56,7 +59,11 @@ export default function Experience() {
       <Laundry />
       <Boat />
       <Buoy />
-      <Props />
+      <Suspense fallback={null}>
+        <PhysicsWorld>
+          <Props />
+        </PhysicsWorld>
+      </Suspense>
       <SkyToys />
       <Weather />
       <MysteryTree />
@@ -65,6 +72,7 @@ export default function Experience() {
       <Bugs />
       <Critters />
       <Whale />
+      <Bubbles />
       <Particles />
       <Tools />
       <Sound />

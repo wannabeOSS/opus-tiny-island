@@ -78,6 +78,16 @@ export function height(x: number, z: number) {
   return h;
 }
 
+/** Lowest ground under a circular footprint, so wide things sit into slopes instead of hovering. */
+export function groundMin(x: number, z: number, r: number) {
+  let m = height(x, z);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    m = Math.min(m, height(x + Math.cos(a) * r, z + Math.sin(a) * r));
+  }
+  return m;
+}
+
 export function normalAt(x: number, z: number, out = new Vector3()) {
   const e = 0.08;
   const hx = height(x + e, z) - height(x - e, z);

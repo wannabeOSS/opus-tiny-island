@@ -370,6 +370,21 @@ class Engine {
       case "grow":
         this.tone(d, { f: 300 * p, f2: 620 * p, dur: 0.6, gain: 0.07 * s, attack: 0.1 });
         break;
+      case "bubble":
+        this.tone(d, { f: 900 * p, f2: 2100 * p, dur: 0.05, gain: 0.07 * s, at: 0.03 });
+        this.noise(d, { type: "highpass", f: 5000, dur: 0.02, gain: 0.03 * s });
+        break;
+      case "conch": {
+        // breathy shell horn: a soft fundamental that bends up, an airy octave, and breath noise
+        const o = this.tone(d, { f: 196 * p, f2: 220 * p, dur: 2.1, gain: 0.11 * s, type: "triangle", attack: 0.28, at: 0.5 });
+        o.frequency.exponentialRampToValueAtTime(208 * p, this.ctx.currentTime + 1.9);
+        this.tone(d, { f: 392 * p, f2: 440 * p, dur: 1.8, gain: 0.035 * s, attack: 0.35, at: 0.5 });
+        this.tone(d, { f: 588 * p, dur: 1.4, gain: 0.012 * s, attack: 0.4 });
+        this.noise(d, { type: "bandpass", f: 900, f2: 700, q: 2.5, dur: 1.9, gain: 0.05 * s, attack: 0.25 });
+        // the island answers with a faint echo
+        this.tone(d, { f: 220 * p, dur: 1.2, gain: 0.03 * s, type: "triangle", attack: 0.2, delay: 1.1 });
+        break;
+      }
       case "seeds":
         for (let i = 0; i < 5; i++) this.noise(d, { type: "highpass", f: 3500, dur: 0.02, gain: 0.08 * s, delay: i * 0.03 + r() * 0.02 });
         break;

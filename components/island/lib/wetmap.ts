@@ -1,6 +1,6 @@
 import { DataTexture, LinearFilter, RedFormat, UnsignedByteType } from "three";
 
-/** Per-spot soil wetness from the watering can, covering the island in world xz. */
+/** Per-spot soil wetness from rain and the pocket cloud, covering the island in world xz. */
 export const WET_SIZE = 32; // world units
 const RES = 96;
 const data = new Uint8Array(RES * RES);
@@ -32,7 +32,7 @@ export function addWet(x: number, z: number, radius: number, amount: number) {
       const d = Math.hypot(i - cx, j - cz) / r;
       if (d > 1) continue;
       const k = j * RES + i;
-      values[k] = Math.min(1, values[k] + amount * (1 - d * d));
+      values[k] = Math.max(0, Math.min(1, values[k] + amount * (1 - d * d)));
     }
   }
   dirty = true;

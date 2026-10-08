@@ -4,27 +4,36 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import {
   AdditiveBlending,
+  CircleGeometry,
   Color,
   CylinderGeometry,
+  Group,
+  IcosahedronGeometry,
   InstancedMesh,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
   Object3D,
+  PointLight,
   Raycaster,
+  RingGeometry,
+  ShaderMaterial,
   Vector2,
   Vector3,
   type Intersection,
 } from "three";
 import { audio } from "../lib/audio";
 import { colliders } from "../lib/colliders";
+import { merge, prep } from "../lib/geo";
 import { clamp } from "../lib/math";
-import { height, inPond, normalAt, POND_LEVEL } from "../lib/terrain";
+import { discover } from "../lib/secrets";
+import { height, inPond, POND_LEVEL } from "../lib/terrain";
 import { groundTargets, landCrumbs, setTool, subscribeTool, toolState, type Surface } from "../lib/tools";
-import { addWet } from "../lib/wetmap";
-import { addPondRipple, addRipple, emit, markInput, sfx, world } from "../lib/world";
+import { addWet, wetAt } from "../lib/wetmap";
+import { addPondRipple, addRipple, emit, markInput, on, sfx, U, world } from "../lib/world";
+import { blowBubble } from "../world/Bubbles";
 import { setCursor } from "../world/cursor";
-import { pools, spawnDust, spawnSparkle, spawnSplash } from "../world/effects/Particles";
+import { pools, spawnSparkle, spawnSplash } from "../world/effects/Particles";
 
 const ray = new Raycaster();
 const ndc = new Vector2();
@@ -33,48 +42,163 @@ const camFwd = new Vector3();
 const camRight = new Vector3();
 const tmp = new Vector3();
 const tmp2 = new Vector3();
+const UP = new Vector3(0, 1, 0);
 
 const DROP = new Color("#cfe9f2");
-const CRUMB = new Color("#e2bf85");
+const FLAKE = new Color("#ffffff");
+const STEAM = new Color("#f4efe6");
+const SUN_COL = new Color("#ffe2a0");
+const MOON_COL = new Color("#b9d2ff");
 const LEAF_COLS = ["#9cc56a", "#c9d77a", "#e9b85b", "#f3d2df"].map((c) => new Color(c));
-const SEED = new Color("#8a6a3e");
-const LANTERN_GLOW = new Color("#ffb85c");
-
-type SkyLantern = { pos: Vector3; vel: Vector3; t: number; phase: number };
-const MAX_SKY = 10;
 const MAX_CRUMBS = 80;
+const RING_POOL = 6;
+/** seconds of steady rain before a pocket cloud crackles */
+const CLOUD_TEMPER = 7;
+
+type Ring = { pos: Vector3; t: number; sea: boolean };
+
+function cloudGeometry() {
+  const white = new Color("#ffffff");
+  const belly = new Color("#c9d3dc");
+  const blobs: [number, number, number, number][] = [
+    [0, 0, 0, 0.4],
+    [0.36, -0.05, 0.04, 0.3],
+    [-0.35, -0.06, -0.03, 0.29],
+    [0.12, 0.2, -0.05, 0.28],
+    [-0.14, 0.15, 0.12, 0.25],
+    [0.06, -0.08, 0.24, 0.25],
+    [-0.02, -0.08, -0.25, 0.25],
+  ];
+  const g = merge(
+    blobs.map(([x, y, z, r]) => {
+      const b = new IcosahedronGeometry(r, 2);
+      b.translate(x, y, z);
+      return prep(b, (p) => (p.y < -0.12 ? belly : white));
+    }),
+  );
+  g.scale(1, 0.78, 1);
+  return g;
+}
+
+const beamVert = /* glsl */ `
+varying vec2 vUv;
+varying vec3 vN;
+varying vec3 vV;
+void main(){
+  vUv = uv;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vN = normalize(normalMatrix * normal);
+  vV = normalize(-mv.xyz);
+  gl_Position = projectionMatrix * mv;
+}`;
+const beamFrag = /* glsl */ `
+uniform vec3 uColor;
+uniform float uAmount;
+uniform float uTime;
+varying vec2 vUv;
+varying vec3 vN;
+varying vec3 vV;
+void main(){
+  float core = pow(abs(dot(normalize(vN), vV)), 1.6);
+  float fade = smoothstep(1.0, 0.15, vUv.y) * smoothstep(0.0, 0.03, vUv.y);
+  float motes = 0.8 + 0.2 * sin(vUv.y * 60.0 - uTime * 2.5 + vUv.x * 25.0);
+  gl_FragColor = vec4(uColor * core * fade * motes * uAmount * 0.55, 1.0);
+}`;
+const glowFrag = /* glsl */ `
+uniform vec3 uColor;
+uniform float uAmount;
+uniform float uTime;
+varying vec2 vUv;
+void main(){
+  float d = length(vUv - 0.5) * 2.0;
+  float g = pow(max(1.0 - d, 0.0), 1.8);
+  float shimmer = 0.9 + 0.1 * sin(uTime * 6.0 + d * 12.0);
+  gl_FragColor = vec4(uColor * g * shimmer * uAmount * 0.9, 1.0);
+}`;
+const glowVert = /* glsl */ `
+varying vec2 vUv;
+void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+
+function surfaceY(p: Vector3, surf: Surface) {
+  return surf === "land" ? height(p.x, p.z) : surf === "pond" ? POND_LEVEL : Math.max(p.y, 0);
+}
 
 export function Tools() {
   const { camera, gl, setEvents } = useThree();
   const ring = useRef<Mesh>(null);
+  const cloud = useRef<Group>(null);
+  const beam = useRef<Mesh>(null);
+  const glow = useRef<Mesh>(null);
+  const light = useRef<PointLight>(null);
+  const ringMeshes = useRef<(Mesh | null)[]>([]);
+  const crumbMesh = useRef<InstancedMesh>(null);
   const st = useRef({
     down: false,
-    downXY: new Vector2(),
     lastXY: new Vector2(),
     lastT: 0,
     acc: 0,
-    lastPlant: new Vector3(1e9, 0, 0),
     gustSfx: 0,
     hintedLook: false,
+    cloudPos: new Vector3(0, -50, 0),
+    cloudShow: 0,
+    cloudHold: 0,
+    cloudFlash: 0,
+    beam: 0,
+    beamAcc: 0,
+    lastBomb: -10,
+    lastConch: -10,
+    answerUntil: -10,
   });
-  const sky = useRef<SkyLantern[]>([]);
-  const skyMesh = useRef<InstancedMesh>(null);
-  const crumbMesh = useRef<InstancedMesh>(null);
+  const rings = useRef<Ring[]>([]);
+  const answers = useRef(new Set<string>());
   const dummy = useMemo(() => new Object3D(), []);
-  const lanternGeo = useMemo(() => {
-    const g = new CylinderGeometry(0.11, 0.08, 0.22, 8, 1, true);
-    return g;
-  }, []);
-  const lanternMat = useMemo(
-    () => new MeshBasicMaterial({ color: new Color("#ffb85c").multiplyScalar(1.6), toneMapped: false, transparent: true, opacity: 0.95, side: 2 }),
+  const crumbMat = useMemo(() => new MeshStandardMaterial({ color: "#d9b478", roughness: 1 }), []);
+  const cloudGeo = useMemo(() => cloudGeometry(), []);
+  const cloudMat = useMemo(() => new MeshStandardMaterial({ vertexColors: true, roughness: 1, emissive: new Color("#fff4dc"), emissiveIntensity: 0.12, transparent: true }), []);
+  const beamGeo = useMemo(() => new CylinderGeometry(0.62, 0.34, 1, 28, 1, true).translate(0, 0.5, 0), []);
+  const beamMat = useMemo(
+    () =>
+      new ShaderMaterial({
+        vertexShader: beamVert,
+        fragmentShader: beamFrag,
+        uniforms: { uColor: { value: SUN_COL.clone() }, uAmount: { value: 0 }, uTime: U.uTime },
+        transparent: true,
+        depthWrite: false,
+        blending: AdditiveBlending,
+        side: 2,
+        toneMapped: false,
+      }),
     [],
   );
-  const crumbMat = useMemo(() => new MeshStandardMaterial({ color: "#d9b478", roughness: 1 }), []);
+  const glowGeo = useMemo(() => new CircleGeometry(0.85, 40).rotateX(-Math.PI / 2), []);
+  const glowMat = useMemo(
+    () =>
+      new ShaderMaterial({
+        vertexShader: glowVert,
+        fragmentShader: glowFrag,
+        uniforms: beamMat.uniforms,
+        transparent: true,
+        depthWrite: false,
+        blending: AdditiveBlending,
+        toneMapped: false,
+      }),
+    [beamMat],
+  );
+  const ringGeo = useMemo(() => new RingGeometry(0.9, 1, 64).rotateX(-Math.PI / 2), []);
+  const ringMats = useMemo(
+    () =>
+      Array.from(
+        { length: RING_POOL },
+        () => new MeshBasicMaterial({ color: "#fff3d6", transparent: true, opacity: 0, depthWrite: false, blending: AdditiveBlending, toneMapped: false }),
+      ),
+    [],
+  );
 
   // pick what's under the pointer
   const pick = (clientX: number, clientY: number): Surface => {
     const rect = gl.domElement.getBoundingClientRect();
     ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    toolState.ndc.copy(ndc);
     ray.setFromCamera(ndc, camera);
     hits.length = 0;
     ray.intersectObjects(groundTargets, false, hits);
@@ -104,6 +228,17 @@ export function Tools() {
     return subscribeTool(apply);
   }, [setEvents]);
 
+  // creatures answering the conch
+  useEffect(
+    () =>
+      on("conchAnswer", ({ who }) => {
+        if (world.elapsed > st.current.answerUntil) return;
+        answers.current.add(who);
+        if (answers.current.size >= 3) discover("chorus");
+      }),
+    [],
+  );
+
   useEffect(() => {
     const el = gl.domElement;
     const s = st.current;
@@ -117,18 +252,20 @@ export function Tools() {
       }
       markInput();
       s.down = true;
-      s.downXY.set(e.clientX, e.clientY);
       s.lastXY.set(e.clientX, e.clientY);
       s.lastT = performance.now();
       s.acc = 1; // fire immediately
-      s.lastPlant.set(1e9, 0, 0);
       const surf = pick(e.clientX, e.clientY);
-      toolState.active = surf !== "none" || toolState.tool === "breeze";
+      toolState.active = surf !== "none" || toolState.tool === "pinwheel";
       toolState.dragVel.x = toolState.dragVel.y = 0;
       if (toolState.active) tap(surf);
     };
     const move = (e: PointerEvent) => {
-      if (toolState.tool === "hand") return;
+      if (toolState.tool === "hand") {
+        const rect = el.getBoundingClientRect();
+        toolState.ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+        return;
+      }
       pick(e.clientX, e.clientY);
       if (!s.down) return;
       const now = performance.now();
@@ -174,87 +311,64 @@ export function Tools() {
       emit("hint", { text: world.mobile ? "two fingers to look around" : "right-drag to look around" });
     }
     switch (toolState.tool) {
-      case "pebble":
-        throwPebble(p, surf);
+      case "seedbomb":
+        throwSeedBomb(p);
         break;
-      case "float":
-        launchFloat(p, surf);
+      case "conch":
+        blowConch(p, surf);
         break;
-      case "seeds":
-        sow(p, surf);
-        break;
-      case "breeze":
+      case "pinwheel":
         sfx("gust", p, 0.4);
+        break;
+      case "cloud":
+        sfx("puff", p, 0.4, 0.8);
+        break;
+      case "mirror":
+        sfx("sparkle", p, 0.35, world.night > 0.5 ? 0.7 : 1.1);
         break;
       default:
         break;
     }
   };
 
-  const throwPebble = (p: Vector3, surf: Surface) => {
+  const throwSeedBomb = (p: Vector3) => {
+    const s = st.current;
+    if (world.elapsed - s.lastBomb < 0.28) return;
+    s.lastBomb = world.elapsed;
     camera.getWorldDirection(camFwd);
-    camRight.crossVectors(camFwd, tmp.set(0, 1, 0)).normalize();
+    camRight.crossVectors(camFwd, UP).normalize();
     const start = tmp2.copy(camera.position).addScaledVector(camFwd, 2.2).addScaledVector(camRight, 0.5);
-    start.y -= 0.9;
+    start.y = Math.max(start.y - 0.9, height(start.x, start.z) + 0.6, 0.6);
     const dist = Math.hypot(p.x - start.x, p.z - start.z);
-    // sea throws go low and fast so they can skim; land throws arc softly
-    const flat = surf === "sea" && height(p.x, p.z) < -0.25;
-    const T = flat ? clamp(dist / 26, 0.35, 1.3) : clamp(dist / 15, 0.45, 1.6);
-    const v = new Vector3((p.x - start.x) / T, (p.y - start.y) / T + 0.5 * 13 * T, (p.z - start.z) / T);
-    if (flat) v.multiplyScalar(1.05);
-    emit("spawnProp", { kind: "pebble", pos: start.clone(), vel: v, spin: true });
-    sfx("whoosh", start, 0.6, 1.1 + Math.random() * 0.2);
+    const T = clamp(dist / 14, 0.5, 1.5);
+    const v = new Vector3((p.x - start.x) / T, (p.y - start.y) / T + 0.5 * 12 * T, (p.z - start.z) / T);
+    emit("spawnProp", { kind: "seedball", pos: start.clone(), vel: v, spin: true });
+    sfx("whoosh", start, 0.55, 0.9 + Math.random() * 0.2);
   };
 
-  const launchFloat = (p: Vector3, surf: Surface) => {
-    const night = world.night > 0.45;
-    if (surf === "sea" || surf === "pond") {
-      emit("spawnProp", { kind: night ? "lantern" : "paperboat", pos: p.clone().setY(Math.max(p.y, 0) + 0.25), vel: new Vector3(0, -0.6, 0) });
-      sfx("plop", p, 0.35, 1.4);
-    } else if (surf === "land") {
-      if (night) {
-        if (sky.current.length >= MAX_SKY) sky.current.shift();
-        sky.current.push({ pos: p.clone().setY(p.y + 0.15), vel: new Vector3(0, 0.25, 0), t: 0, phase: Math.random() * 6 });
-        sfx("chime", p, 0.35, 0.8);
-        spawnSparkle(p, 6, new Color("#ffcf7a"), 0.2, 0.4);
-      } else {
-        emit("spawnProp", { kind: "paperboat", pos: p.clone().setY(p.y + 0.4), vel: new Vector3(0, 0.6, 0) });
-        sfx("pick", p, 0.4);
-      }
-    }
-  };
-
-  const sow = (p: Vector3, surf: Surface) => {
-    st.current.lastPlant.copy(p);
-    for (let i = 0; i < 5; i++) {
-      pools.soft.spawn({
-        x: p.x + (Math.random() - 0.5) * 0.1,
-        y: p.y + 0.5,
-        z: p.z + (Math.random() - 0.5) * 0.1,
-        vx: (Math.random() - 0.5) * 0.6,
-        vy: -0.5,
-        vz: (Math.random() - 0.5) * 0.6,
-        color: SEED,
-        size: 0.035,
-        life: 0.4,
-        gravity: 9,
-        drag: 0.5,
-      });
-    }
-    sfx("seeds", p, 0.6);
-    if (surf === "land") {
-      const n = normalAt(p.x, p.z);
-      if (p.y > 0.5 && n.y > 0.8 && !inPond(p.x, p.z)) {
-        setTimeout(() => emit("plantSprout", { pos: p.clone() }), 260);
-      } else {
-        spawnDust(p, new Color("#e6d2a0"), 0.4);
-      }
-    } else if (surf === "sea" || surf === "pond") {
+  const blowConch = (p: Vector3, surf: Surface) => {
+    const s = st.current;
+    if (world.elapsed - s.lastConch < 1.6) return;
+    s.lastConch = world.elapsed;
+    const sea = surf === "sea";
+    const at = p.clone().setY(surfaceY(p, surf) + 0.04);
+    sfx("conch", at, 1, 0.94 + Math.random() * 0.1);
+    for (let i = 0; i < 3; i++) rings.current.push({ pos: at.clone(), t: -i * 0.3, sea: sea || surf === "pond" });
+    if (rings.current.length > RING_POOL) rings.current.splice(0, rings.current.length - RING_POOL);
+    for (let i = 0; i < 3; i++) {
       setTimeout(() => {
-        emit("crumbs", { pos: p.clone(), water: true });
-        if (surf === "pond") addPondRipple(p.x, p.z, 0.3);
-        else addRipple(p.x, p.z, 0.2);
-      }, 300);
+        if (surf === "pond") addPondRipple(at.x, at.z, 0.35);
+        else if (sea) addRipple(at.x, at.z, 0.35);
+      }, i * 300);
+    }
+    answers.current.clear();
+    s.answerUntil = world.elapsed + 3.2;
+    emit("conch", { pos: at.clone(), sea });
+    if (sea && world.night > 0.5) {
+      setTimeout(() => {
+        emit("whale", {});
+        emit("conchAnswer", { who: "whale" });
+      }, 1500);
     }
   };
 
@@ -265,67 +379,109 @@ export function Tools() {
     const surf = toolState.surface;
     const tool = toolState.tool;
     const act = toolState.active && s.down;
+    const t = world.elapsed;
+    const night = world.night > 0.5;
 
     // aim ring
     const r = ring.current;
     if (r) {
       r.visible = tool !== "hand" && surf !== "none" && world.pointerOverWorld && !world.mobile;
       if (r.visible) {
-        const y = surf === "land" ? height(p.x, p.z) + 0.03 : surf === "pond" ? POND_LEVEL + 0.02 : Math.max(p.y, 0) + 0.06;
-        r.position.set(p.x, y, p.z);
-        const sc = tool === "water" ? 0.45 : tool === "breeze" ? 0.7 : tool === "crumbs" ? 0.4 : 0.25;
-        r.scale.setScalar(sc * (act ? 0.85 + Math.sin(world.elapsed * 12) * 0.05 : 1));
+        r.position.set(p.x, surfaceY(p, surf) + 0.03, p.z);
+        const sc = { pinwheel: 0.7, cloud: 0.5, mirror: 0.55, bubbles: 0.3, seedbomb: 0.28, conch: 0.4, hand: 0.25 }[tool];
+        r.scale.setScalar(sc * (act ? 0.85 + Math.sin(t * 12) * 0.05 : 1));
         (r.material as MeshBasicMaterial).opacity = act ? 0.55 : 0.32;
       }
     }
 
-    audio.loop("pour", act && tool === "water" ? 0.1 : 0);
-
     if (act) {
       markInput();
       s.acc += dt;
-      if (tool === "water") pour(p, surf, dt);
-      if (tool === "crumbs" && s.acc > 0.12) {
-        s.acc = 0;
-        sprinkle(p, surf);
-      }
-      if (tool === "seeds" && surf === "land" && p.distanceTo(s.lastPlant) > 0.45) sow(p, surf);
-      if (tool === "breeze") blow(p, dt);
+      if (tool === "pinwheel") blow(p, dt);
+      if (tool === "bubbles") bubbleLoop(p, surf);
+      if (tool === "mirror") shine(p, surf, dt);
     }
 
-    // sky lanterns drift up and away
-    const lanterns = sky.current;
-    for (let i = lanterns.length - 1; i >= 0; i--) {
-      const l = lanterns[i];
-      l.t += dt;
-      l.vel.y = Math.min(0.9, l.vel.y + dt * 0.12);
-      l.pos.x += (world.wind.x * 0.5 + Math.sin(l.t * 0.7 + l.phase) * 0.15) * dt;
-      l.pos.z += (world.wind.y * 0.5 + Math.cos(l.t * 0.6 + l.phase) * 0.15) * dt;
-      l.pos.y += l.vel.y * dt;
-      if (l.t > 60) lanterns.splice(i, 1);
-      else if (Math.random() < dt * 2) {
-        pools.glow.spawn({ x: l.pos.x, y: l.pos.y - 0.05, z: l.pos.z, color: LANTERN_GLOW, size: 0.5, life: 0.5, gravity: 0, drag: 1, alpha: 0.25 });
+    // pocket cloud: drifts after the pointer, rains while held
+    const showCloud = tool === "cloud" && (act || (!world.mobile && surf !== "none" && world.pointerOverWorld));
+    s.cloudShow = clamp(s.cloudShow + (showCloud ? dt * 4 : -dt * 3));
+    const raining = tool === "cloud" && act && surf !== "none";
+    if (surf !== "none") {
+      const target = tmp.set(p.x, surfaceY(p, surf) + 1.75, p.z);
+      if (s.cloudPos.y < -10) s.cloudPos.copy(target);
+      s.cloudPos.lerp(target, 1 - Math.exp(-dt * 7));
+    }
+    s.cloudHold = raining ? s.cloudHold + dt : Math.max(0, s.cloudHold - dt * 2);
+    s.cloudFlash = Math.max(0, s.cloudFlash - dt * 3);
+    if (raining) rain(p, surf, dt);
+    const cg = cloud.current;
+    if (cg) {
+      cg.visible = s.cloudShow > 0.01;
+      cg.position.copy(s.cloudPos);
+      cg.position.y += Math.sin(t * 1.6) * 0.05;
+      const sq = raining ? Math.sin(t * 9) * 0.02 : 0;
+      cg.scale.set(s.cloudShow * (1 + sq), s.cloudShow * (1 - sq), s.cloudShow * (1 + sq));
+      cg.rotation.y = Math.sin(t * 0.4) * 0.3;
+      const temper = clamp(s.cloudHold / CLOUD_TEMPER);
+      cloudMat.color.setRGB(1 - temper * 0.42, 1 - temper * 0.36, 1 - temper * 0.28);
+      cloudMat.emissiveIntensity = 0.12 + s.cloudFlash * 2.5;
+      cloudMat.opacity = Math.min(1, s.cloudShow * 1.2);
+    }
+    audio.loop("pour", raining && world.w.snow < 0.5 ? 0.07 : 0);
+
+    // sun mirror beam
+    s.beam += ((act && tool === "mirror" && surf !== "none" ? 1 : 0) - s.beam) * (1 - Math.exp(-dt * 10));
+    const bm = beam.current;
+    const gw = glow.current;
+    const lt = light.current;
+    if (bm && gw && lt) {
+      const on = s.beam > 0.01;
+      bm.visible = gw.visible = on;
+      lt.visible = on;
+      if (on) {
+        const y = surfaceY(p, surf);
+        const src = world.sunDir.y > 0.05 ? world.sunDir : world.moonDir.y > 0.05 ? world.moonDir : tmp2.set(0.3, 1, 0.2);
+        // a low sun would lay the shaft flat across the hills; keep it falling from the sky
+        const dir = tmp2.set(src.x, Math.max(src.y, 1.4), src.z).normalize();
+        bm.position.set(p.x, y, p.z);
+        bm.quaternion.setFromUnitVectors(UP, dir);
+        bm.scale.set(1, 16, 1);
+        gw.position.set(p.x, y + 0.03, p.z);
+        const col = night ? MOON_COL : SUN_COL;
+        beamMat.uniforms.uColor.value.copy(col);
+        beamMat.uniforms.uAmount.value = s.beam * (night ? 0.8 : 1);
+        lt.position.set(p.x, y + 0.55, p.z);
+        lt.color.copy(col);
+        lt.intensity = s.beam * (night ? 1.6 : 2.6);
       }
     }
-    const sm = skyMesh.current;
-    if (sm) {
-      lanterns.forEach((l, i) => {
-        dummy.position.copy(l.pos);
-        const flick = 1 + Math.sin(l.t * 9 + l.phase) * 0.03;
-        dummy.scale.set(flick, flick, flick);
-        dummy.rotation.set(Math.sin(l.t + l.phase) * 0.08, l.t * 0.2, 0);
-        dummy.updateMatrix();
-        sm.setMatrixAt(i, dummy.matrix);
-      });
-      sm.count = lanterns.length;
-      sm.instanceMatrix.needsUpdate = true;
-      lanternMat.opacity = 0.95 * clamp(world.night * 1.4);
+
+    // conch rings spreading out
+    const rs = rings.current;
+    for (let i = rs.length - 1; i >= 0; i--) {
+      rs[i].t += dt;
+      if (rs[i].t > 1.8) rs.splice(i, 1);
+    }
+    for (let i = 0; i < RING_POOL; i++) {
+      const m = ringMeshes.current[i];
+      if (!m) continue;
+      const rg = rs[i];
+      if (!rg || rg.t < 0) {
+        m.visible = false;
+        continue;
+      }
+      m.visible = true;
+      const k = rg.t / 1.8;
+      m.position.copy(rg.pos);
+      if (!rg.sea) m.position.y = height(rg.pos.x, rg.pos.z) + 0.05;
+      m.scale.setScalar(0.3 + (1 - Math.pow(1 - k, 2)) * 5.5);
+      ringMats[i].opacity = (1 - k) * 0.55;
     }
 
-    // crumbs on the ground
+    // crumbs and loose seeds on the ground
     const cm = crumbMesh.current;
     if (cm) {
-      for (let i = landCrumbs.length - 1; i >= 0; i--) if (world.elapsed - landCrumbs[i].t > 90) landCrumbs.splice(i, 1);
+      for (let i = landCrumbs.length - 1; i >= 0; i--) if (t - landCrumbs[i].t > 90) landCrumbs.splice(i, 1);
       landCrumbs.forEach((c, i) => {
         dummy.position.copy(c.pos);
         dummy.rotation.set(i, i * 2.3, 0);
@@ -338,84 +494,119 @@ export function Tools() {
     }
   });
 
-  const pour = (p: Vector3, surf: Surface, dt: number) => {
+  const rain = (p: Vector3, surf: Surface, dt: number) => {
+    const s = st.current;
+    const c = s.cloudPos;
+    const snow = world.w.snow > 0.5;
+    const ground = surfaceY(p, surf);
+    const fall = Math.max(0.3, c.y - 0.22 - ground);
+    const n = Math.ceil(dt * (snow ? 28 : 85));
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.sqrt(Math.random()) * 0.38;
+      const vy = snow ? -0.9 : -6.5;
+      pools.soft.spawn({
+        x: c.x + Math.cos(a) * rr,
+        y: c.y - 0.22,
+        z: c.z + Math.sin(a) * rr,
+        vx: 0,
+        vy,
+        vz: 0,
+        color: snow ? FLAKE : DROP,
+        size: snow ? 0.04 : 0.026,
+        life: fall / -vy,
+        gravity: 0,
+        drag: 0,
+        alpha: snow ? 0.95 : 0.75,
+        wind: snow ? 0.6 : 0,
+      });
+    }
+    if (s.acc > 0.08) {
+      s.acc = 0;
+      const jx = c.x + (Math.random() - 0.5) * 0.6;
+      const jz = c.z + (Math.random() - 0.5) * 0.6;
+      if (surf === "land") {
+        if (!snow) addWet(jx, jz, 0.55, 0.1);
+        emit("watered", { pos: new Vector3(jx, ground, jz), amount: snow ? 0.03 : 0.08 });
+        if (!snow && Math.random() < 0.4) spawnSplash(tmp.set(jx, ground, jz), 0.02);
+      } else if (surf === "pond") {
+        addPondRipple(jx, jz, 0.2);
+        emit("watered", { pos: new Vector3(jx, ground, jz), amount: 0.04 });
+      } else if (surf === "sea") {
+        addRipple(jx, jz, 0.1);
+      }
+    }
+    // a cloud kept raining too long gets cross
+    if (s.cloudHold > CLOUD_TEMPER && !snow) {
+      s.cloudHold = 0;
+      s.cloudFlash = 1;
+      emit("lightning", { pos: c.clone().setY(c.y - 0.2), target: p.clone().setY(ground), small: true });
+      discover("pocketStorm");
+    } else if (s.cloudHold > CLOUD_TEMPER * 0.7 && Math.random() < dt * 1.5) {
+      s.cloudFlash = Math.max(s.cloudFlash, 0.4);
+      sfx("thunder", c, 0.12);
+    }
+  };
+
+  const shine = (p: Vector3, surf: Surface, dt: number) => {
+    const s = st.current;
+    s.beamAcc += dt;
+    if (s.beamAcc < 0.12) return;
+    s.beamAcc = 0;
+    const night = world.night > 0.5;
+    const y = surfaceY(p, surf);
+    emit("sunbeam", { pos: p.clone().setY(y), night });
+    const col = night ? MOON_COL : SUN_COL;
+    if (surf === "land") {
+      if (!night && wetAt(p.x, p.z) > 0.08) {
+        addWet(p.x, p.z, 0.6, -0.07);
+        for (let i = 0; i < 3; i++) {
+          pools.soft.spawn({
+            x: p.x + (Math.random() - 0.5) * 0.6,
+            y: y + 0.05,
+            z: p.z + (Math.random() - 0.5) * 0.6,
+            vx: 0,
+            vy: 0.5 + Math.random() * 0.4,
+            vz: 0,
+            color: STEAM,
+            size: 0.12 + Math.random() * 0.08,
+            life: 1.2,
+            gravity: -0.2,
+            drag: 0.8,
+            alpha: 0.35,
+            wind: 1,
+          });
+        }
+        if (Math.random() < 0.15) sfx("sand", p, 0.25, 1.6);
+      }
+      spawnSparkle(tmp.set(p.x + (Math.random() - 0.5) * 0.7, y + 0.15, p.z + (Math.random() - 0.5) * 0.7), 1, col, 0.1, 0.5);
+    } else {
+      for (let i = 0; i < 3; i++) spawnSparkle(tmp.set(p.x + (Math.random() - 0.5) * 1.2, y + 0.04, p.z + (Math.random() - 0.5) * 1.2), 1, col, 0.05, 0.4);
+    }
+  };
+
+  const bubbleLoop = (p: Vector3, surf: Surface) => {
+    const s = st.current;
+    const dv = toolState.dragVel;
+    const speed = Math.hypot(dv.x, dv.y);
+    const rate = 3 + Math.min(14, speed / 70);
+    if (s.acc < 1 / rate) return;
+    s.acc = 0;
     camera.getWorldDirection(camFwd);
     camFwd.y = 0;
     camFwd.normalize();
     camRight.set(-camFwd.z, 0, camFwd.x);
-    // the can hovers above and a little in front of the aim point
-    const sx = p.x - camFwd.x * 0.5 - camRight.x * 0.55;
-    const sz = p.z - camFwd.z * 0.5 - camRight.z * 0.55;
-    const sy = p.y + 1.25;
-    const T = 0.42;
-    const n = Math.ceil(dt * 90);
-    for (let i = 0; i < n; i++) {
-      const tx = p.x + (Math.random() - 0.5) * 0.35;
-      const tz = p.z + (Math.random() - 0.5) * 0.35;
-      pools.soft.spawn({
-        x: sx,
-        y: sy,
-        z: sz,
-        vx: (tx - sx) / T,
-        vy: (p.y - sy) / T + 0.5 * 9 * T,
-        vz: (tz - sz) / T,
-        color: DROP,
-        size: 0.04 + Math.random() * 0.03,
-        life: T,
-        gravity: 9,
-        drag: 0,
-        alpha: 0.85,
-      });
-    }
-    if (st.current.acc > 0.08) {
-      st.current.acc = 0;
-      const jx = p.x + (Math.random() - 0.5) * 0.3;
-      const jz = p.z + (Math.random() - 0.5) * 0.3;
-      if (surf === "land") {
-        addWet(jx, jz, 0.5, 0.12);
-        emit("watered", { pos: new Vector3(jx, p.y, jz), amount: 0.08 });
-        if (Math.random() < 0.5) spawnSplash(tmp.set(jx, p.y, jz), 0.02);
-      } else if (surf === "pond") {
-        addPondRipple(jx, jz, 0.25);
-        emit("watered", { pos: new Vector3(jx, p.y, jz), amount: 0.04 });
-      } else if (surf === "sea") {
-        addRipple(jx, jz, 0.12);
-      }
-    }
-  };
-
-  const sprinkle = (p: Vector3, surf: Surface) => {
-    for (let i = 0; i < 4; i++) {
-      pools.soft.spawn({
-        x: p.x + (Math.random() - 0.5) * 0.3,
-        y: p.y + 0.9,
-        z: p.z + (Math.random() - 0.5) * 0.3,
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: -0.3,
-        vz: (Math.random() - 0.5) * 0.4,
-        color: CRUMB,
-        size: 0.04,
-        life: 0.42,
-        gravity: 9,
-        drag: 0.3,
-        wind: 0.5,
-      });
-    }
-    if (Math.random() < 0.5) sfx("seeds", p, 0.35, 0.7);
-    const at = p.clone();
-    setTimeout(() => {
-      if (surf === "land") {
-        if (landCrumbs.length >= MAX_CRUMBS) landCrumbs.shift();
-        const x = at.x + (Math.random() - 0.5) * 0.25;
-        const z = at.z + (Math.random() - 0.5) * 0.25;
-        landCrumbs.push({ pos: new Vector3(x, height(x, z) + 0.012, z), t: world.elapsed });
-        emit("crumbs", { pos: at, water: false });
-      } else if (surf === "sea" || surf === "pond") {
-        if (surf === "pond") addPondRipple(at.x, at.z, 0.15);
-        else addRipple(at.x, at.z, 0.12);
-        emit("crumbs", { pos: at, water: true });
-      }
-    }, 380);
+    const k = Math.min(1.6, speed / 450);
+    const sx = speed > 1 ? dv.x / speed : 0;
+    const sy = speed > 1 ? dv.y / speed : 0;
+    const vel = new Vector3(
+      (camRight.x * sx - camFwd.x * sy) * k + (Math.random() - 0.5) * 0.3,
+      0.2 + Math.random() * 0.25,
+      (camRight.z * sx - camFwd.z * sy) * k + (Math.random() - 0.5) * 0.3,
+    );
+    const big = Math.random() < 0.06;
+    blowBubble(new Vector3(p.x, surfaceY(p, surf) + 0.45, p.z), vel, big ? 0.2 + Math.random() * 0.08 : undefined);
+    if (Math.random() < 0.3) sfx("puff", p, 0.12, 1.6);
   };
 
   const blow = (p: Vector3, dt: number) => {
@@ -476,7 +667,25 @@ export function Tools() {
         <ringGeometry args={[0.82, 1, 40]} />
         <meshBasicMaterial color="#fff6dc" transparent opacity={0.35} depthWrite={false} blending={AdditiveBlending} toneMapped={false} />
       </mesh>
-      <instancedMesh ref={skyMesh} args={[lanternGeo, lanternMat, MAX_SKY]} frustumCulled={false} raycast={() => null} />
+      <group ref={cloud} visible={false}>
+        <mesh geometry={cloudGeo} material={cloudMat} castShadow raycast={() => null} />
+      </group>
+      <mesh ref={beam} geometry={beamGeo} material={beamMat} visible={false} raycast={() => null} renderOrder={7} frustumCulled={false} />
+      <mesh ref={glow} geometry={glowGeo} material={glowMat} visible={false} raycast={() => null} renderOrder={7} />
+      <pointLight ref={light} visible={false} distance={3.5} decay={2} intensity={0} />
+      {ringMats.map((m, i) => (
+        <mesh
+          key={i}
+          ref={(o) => {
+            ringMeshes.current[i] = o;
+          }}
+          geometry={ringGeo}
+          material={m}
+          visible={false}
+          raycast={() => null}
+          renderOrder={8}
+        />
+      ))}
       <instancedMesh ref={crumbMesh} args={[undefined, crumbMat, MAX_CRUMBS]} frustumCulled={false} raycast={() => null}>
         <boxGeometry args={[0.035, 0.02, 0.03]} />
       </instancedMesh>

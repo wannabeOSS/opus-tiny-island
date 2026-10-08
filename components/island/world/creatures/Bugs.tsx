@@ -19,6 +19,7 @@ import {
 import { clamp, mulberry32, smoothstep } from "../../lib/math";
 import { height, inPond } from "../../lib/terrain";
 import { POND } from "../../lib/layout";
+import { toolState } from "../../lib/tools";
 import { U, idleSeconds, on, world } from "../../lib/world";
 import { flowerSpots } from "../Flora";
 
@@ -38,7 +39,7 @@ type Fly = {
   pos: Vector3;
   vel: Vector3;
   target: Vector3;
-  state: "flit" | "rest" | "follow";
+  state: "flit" | "rest" | "follow" | "beam";
   timer: number;
   presence: number;
   phase: number;
@@ -107,6 +108,12 @@ function Butterflies() {
           f.vel.y += 1;
         }
       } else {
+        const beam = toolState.tool === "mirror" && toolState.active && world.night < 0.5 && toolState.surface === "land";
+        if (beam && f.state !== "follow" && Math.hypot(toolState.point.x - f.pos.x, toolState.point.z - f.pos.z) < 7) {
+          f.state = "beam";
+          f.timer = 0.5;
+        }
+        if (f.state === "beam" && !beam) f.timer = Math.min(f.timer, 0);
         if (f.timer < 0) {
           // choose: follow the cursor if it's near and gentle, else a flower
           const p = world.pointer;
@@ -123,9 +130,11 @@ function Butterflies() {
           }
         }
         if (f.state === "follow") f.target.copy(world.pointer).add(new Vector3(Math.sin(t * 1.3 + i) * 0.35, 0.45, Math.cos(t * 1.1 + i) * 0.35));
+        // dancing in the sunbeam
+        if (f.state === "beam") f.target.copy(toolState.point).add(new Vector3(Math.sin(t * 1.7 + i * 2) * 0.45, 0.35 + Math.sin(t * 2.3 + i) * 0.2, Math.cos(t * 1.5 + i * 2) * 0.45));
         const to = f.target.clone().sub(f.pos);
         const d = to.length();
-        to.normalize().multiplyScalar(f.state === "follow" ? 2.2 : 1.6);
+        to.normalize().multiplyScalar(f.state === "follow" || f.state === "beam" ? 2.2 : 1.6);
         f.vel.lerp(to, Math.min(1, dt * 1.6));
         // flutter
         f.vel.x += Math.sin(t * 7 + f.phase) * dt * 3;
@@ -254,8 +263,9 @@ function Fireflies() {
     // a still cursor on the grass draws them in
     const st = s.current;
     st.still = world.pointerOnLand && world.pointerSpeed < 60 && idleSeconds() < 30 ? st.still + dt : 0;
-    const gather = st.still > 1.2;
-    const p = world.pointer;
+    const moonbeam = toolState.tool === "mirror" && toolState.active && toolState.surface === "land";
+    const gather = st.still > 1.2 || moonbeam;
+    const p = moonbeam ? toolState.point : world.pointer;
     const arr = pts.geometry.attributes.position.array as Float32Array;
     ffs.forEach((f, i) => {
       const k = f.seed * 50;

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import type { ToolKind } from "../lib/tools";
 import type { WeatherKind } from "../lib/world";
 
@@ -92,89 +92,114 @@ export function HandFist(p: P) {
 }
 
 /* ---------------- tools ---------------- */
-export function Breeze(p: P) {
+const BLADES = ["#f2c14e", "#ff8a7a", "#6fc3ff", "#6fe09a"];
+
+/** The spinning part of the pinwheel, around (16, 12.5); exposed so the cursor can turn it. */
+export function PinwheelRotor({ angle = 0, gRef }: { angle?: number; gRef?: Ref<SVGGElement> }) {
+  return (
+    <g ref={gRef} transform={`rotate(${angle} 16 12.5)`}>
+      {BLADES.map((c, i) => (
+        <path
+          key={c}
+          d="M16 12.5L16 3.2c3.6 0 6.2 2.6 6.2 5.6z"
+          transform={`rotate(${i * 90} 16 12.5)`}
+          fill={c}
+          stroke={INK}
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+        />
+      ))}
+      <circle cx="16" cy="12.5" r="1.7" fill={PAPER} stroke={INK} strokeWidth="1.3" />
+    </g>
+  );
+}
+
+export function Pinwheel({ rotorRef, ...p }: P & { rotorRef?: Ref<SVGGElement> }) {
   return (
     <Svg {...p}>
-      <path d="M3.5 11.5h15a3.6 3.6 0 1 0-3.6-3.6" {...line} />
-      <path d="M3.5 17h20a3.6 3.6 0 1 1-3.6 3.6" {...line} />
-      <path d="M6.5 22.5h7" {...line} />
-      <ellipse cx="25" cy="10" rx="2.6" ry="1.4" transform="rotate(-35 25 10)" fill="#9cc56a" stroke={INK} strokeWidth="1.2" />
+      <path d="M16.4 14l3.8 15" stroke={INK} strokeWidth="3.4" strokeLinecap="round" />
+      <path d="M16.4 14l3.8 15" stroke="#c99a62" strokeWidth="1.6" strokeLinecap="round" />
+      <PinwheelRotor gRef={rotorRef} />
     </Svg>
   );
 }
 
-export function WateringCan(p: P) {
+export function PocketCloud(p: P) {
   return (
     <Svg {...p}>
-      <path d="M8.5 14.5c-4.2 0-4.6 7.2 0 7.6" {...line} />
-      <path d="M18.4 18l7.2-6.6" {...line} strokeWidth={2.4} />
-      <path d="M24.4 8.9l3.4 3.7" {...line} strokeWidth={3.2} />
-      <path d="M7.6 13.2h11.6l-1.3 11.4a2 2 0 0 1-2 1.7h-5a2 2 0 0 1-2-1.7z" fill="#8cc7c0" stroke={INK} strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M10 17.5h6.5" stroke={PAPER} strokeWidth="1.4" strokeLinecap="round" opacity="0.8" />
+      <path d="M8.5 19.5h15a4.2 4.2 0 0 0 .6-8.3 6.2 6.2 0 0 0-11.8-1.3 4.8 4.8 0 0 0-3.8 9.6z" fill="#f4f7fb" stroke={INK} strokeWidth="1.8" strokeLinejoin="round" />
+      <circle cx="13.6" cy="14.6" r="0.9" fill={INK} />
+      <circle cx="18.6" cy="14.6" r="0.9" fill={INK} />
+      <path d="M15 16.6c.7.6 1.6.6 2.3 0" stroke={INK} strokeWidth="1" fill="none" strokeLinecap="round" />
+      <path d="M11 23l-1 3M16 23l-1 3.6M21 23l-1 3" stroke="#3f9fd8" strokeWidth="1.8" strokeLinecap="round" />
     </Svg>
   );
 }
 
-export function SeedPouch(p: P) {
+export function SunMirror(p: P) {
   return (
     <Svg {...p}>
-      <path d="M10.5 13c-3.2 3-4.4 8-2.3 11.2 1.5 2.3 4.6 3.1 7.8 3.1s6.3-.8 7.8-3.1c2.1-3.2.9-8.2-2.3-11.2z" fill="#e8c27a" stroke={INK} strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M10.5 12.8h11M12.5 12.6l-2.2-4.2M16 12.6V8M19.5 12.6l2.2-4.2" {...line} />
-      <ellipse cx="13.2" cy="20.5" rx="1.1" ry="0.8" fill={INK} />
-      <ellipse cx="17.6" cy="22.4" rx="1.1" ry="0.8" fill={INK} />
-      <ellipse cx="18.6" cy="18.2" rx="1.1" ry="0.8" fill={INK} />
+      <path d="M17.5 18.5l7.8 8.6" stroke={INK} strokeWidth="4.2" strokeLinecap="round" />
+      <path d="M17.5 18.5l7.8 8.6" stroke="#a8754a" strokeWidth="2.2" strokeLinecap="round" />
+      <circle cx="13" cy="13" r="8.4" fill="#e9b85b" stroke={INK} strokeWidth="1.8" />
+      <circle cx="13" cy="13" r="5.8" fill="#d9f0f6" stroke={INK} strokeWidth="1.2" />
+      <path d="M10.2 11.6c.6-1.5 1.8-2.4 3.3-2.6" stroke={PAPER} strokeWidth="1.5" fill="none" strokeLinecap="round" />
+      <path d="M26.5 3.5v4M24.5 5.5h4" stroke="#f2a93b" strokeWidth="1.6" strokeLinecap="round" />
     </Svg>
   );
 }
 
-export function Crumbs(p: P) {
+export function BubbleWand(p: P) {
   return (
     <Svg {...p}>
-      <path
-        d="M6 16c0-4 4.5-6.5 10-6.5S26 12 26 16c0 1.3-.9 2-2 2v4.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 8 22.5V18c-1.1 0-2-.7-2-2z"
-        fill="#f0cf94"
-        stroke={INK}
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <path d="M11 15.5c1.5-1.4 3-1.4 4.5 0M16.5 14c1.2-1 2.4-1 3.6 0" stroke="#c99a52" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-      <circle cx="9.5" cy="28" r="1.1" fill={INK} />
-      <circle cx="15" cy="29" r="0.9" fill={INK} />
-      <circle cx="21.5" cy="28.2" r="1.2" fill={INK} />
+      <path d="M5.5 28.5l9.2-10.2" stroke={INK} strokeWidth="3.6" strokeLinecap="round" />
+      <path d="M5.5 28.5l9.2-10.2" stroke="#a78bff" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="18.6" cy="13.6" r="5.4" fill="none" stroke={INK} strokeWidth="3.6" />
+      <circle cx="18.6" cy="13.6" r="5.4" fill="#e9f6ff" fillOpacity="0.55" stroke="#a78bff" strokeWidth="1.8" />
+      <circle cx="26" cy="5.6" r="2.8" fill="#eaf7ff" stroke="#5aa7d8" strokeWidth="1.3" />
+      <circle cx="27.4" cy="12.2" r="1.6" fill="#f6edff" stroke="#a78bff" strokeWidth="1.1" />
+      <path d="M24.8 4.6c.4-.5.9-.8 1.5-.9" stroke={PAPER} strokeWidth="0.9" fill="none" strokeLinecap="round" />
     </Svg>
   );
 }
 
-export function Pebbles(p: P) {
+export function SeedBomb(p: P) {
   return (
     <Svg {...p}>
-      <ellipse cx="16" cy="24" rx="10" ry="4.4" fill="#b9b3a6" stroke={INK} strokeWidth="1.8" />
-      <ellipse cx="13.6" cy="17.6" rx="6.4" ry="3.5" fill="#d8d2c4" stroke={INK} strokeWidth="1.8" />
-      <ellipse cx="17.6" cy="11.6" rx="4.2" ry="2.7" fill="#a59f92" stroke={INK} strokeWidth="1.8" />
-      <path d="M10.8 16.8c1-.6 2.2-.8 3.4-.6" stroke={PAPER} strokeWidth="1.2" fill="none" strokeLinecap="round" />
+      <path d="M16 11.5c0-2.6 1-4.6 2.8-6" stroke="#4f8a3a" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+      <path d="M16.6 9.2c-3-.4-4.8-2.2-4.9-4.6 2.8.1 4.6 1.7 4.9 4.6z" fill="#7cc35a" stroke={INK} strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M18 7.6c1.8-2.3 4.3-3 6.4-2.1-1 2.4-3.4 3.3-6.4 2.1z" fill="#9bd36f" stroke={INK} strokeWidth="1.3" strokeLinejoin="round" />
+      <circle cx="16" cy="19.5" r="8.6" fill="#b98b5e" stroke={INK} strokeWidth="1.8" />
+      <circle cx="12.4" cy="17.4" r="1" fill="#f08aa8" />
+      <circle cx="18.8" cy="22.6" r="1" fill="#e9c46a" />
+      <circle cx="19.6" cy="16.4" r="0.9" fill="#6fae4a" />
+      <circle cx="13.6" cy="23.2" r="0.8" fill="#6fae4a" />
+      <path d="M10.6 15.2c1-1.4 2.3-2.2 3.8-2.5" stroke="#d9b48a" strokeWidth="1.2" fill="none" strokeLinecap="round" />
     </Svg>
   );
 }
 
-export function PaperBoat(p: P) {
+export function Conch(p: P) {
   return (
     <Svg {...p}>
-      <path d="M3 17.5l5.2 7.5h15.6l5.2-7.5z" fill={PAPER} stroke={INK} strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M9 17.5l7-11.5 7 11.5z" fill="#f6dfc4" stroke={INK} strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M16 6v11.5" stroke={INK} strokeWidth="1" opacity="0.5" />
-      <path d="M5 28.5c2-1.2 4-1.2 6 0s4 1.2 6 0 4-1.2 6 0 3 .8 4 .4" stroke="#5aa39b" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+      <Outlined fill="#f6d2bb" w={3.4}>
+        <path d="M26.5 4l-2.8 4.6c-6.2.2-12.6 3.8-16 10.2-1.4 2.8-.6 5.6 1.8 6.9l3.6 1.8c5.6.6 11-2.6 13.4-8.4 1.2-3.2 1.2-6.6.2-9.6z" />
+        <path d="M12.8 11.6l-.6-3.4 2.6 2.3zM17.6 9.4l.2-3.4 2 2.9zM22.2 8.6l1.4-3 .9 3.3z" />
+      </Outlined>
+      <path d="M9.4 18.6c2.8.3 5.6 2.2 7 5.4-2.2 1.8-5 2.4-7.6 1.6-2.2-1.4-2-4.6.6-7z" fill="#f49ac1" stroke={INK} strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M23.7 8.6c1 2.6.8 5.6-.6 8.2M19.6 10.2c.4 2.6-.2 5.4-1.8 7.6" stroke="#c98f74" strokeWidth="1.2" fill="none" strokeLinecap="round" />
     </Svg>
   );
 }
 
 export const TOOL_ICON: Record<ToolKind, (p: P) => ReactNode> = {
   hand: HandOpen,
-  breeze: Breeze,
-  water: WateringCan,
-  seeds: SeedPouch,
-  crumbs: Crumbs,
-  pebble: Pebbles,
-  float: PaperBoat,
+  pinwheel: Pinwheel,
+  cloud: PocketCloud,
+  mirror: SunMirror,
+  bubbles: BubbleWand,
+  seedbomb: SeedBomb,
+  conch: Conch,
 };
 
 /* ---------------- weather ---------------- */

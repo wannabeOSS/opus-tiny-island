@@ -19,7 +19,7 @@ import { POND } from "../../lib/layout";
 import { angleDelta, mulberry32 } from "../../lib/math";
 import { discover } from "../../lib/secrets";
 import { distToPath, height, normalAt, POND_LEVEL } from "../../lib/terrain";
-import { addPondRipple, idleSeconds, markInput, on, sfx, world } from "../../lib/world";
+import { addPondRipple, emit, idleSeconds, markInput, on, sfx, world } from "../../lib/world";
 import { hoverable } from "../cursor";
 import { spawnDust, spawnSparkle } from "../effects/Particles";
 import { LILY_PADS } from "../Pond";
@@ -99,6 +99,10 @@ type Crab = {
   pokeT: number;
   snap: number;
   pos: Vector3;
+  /** claws up and waving (answering the conch) rather than snapping */
+  waving: boolean;
+  /** wave as soon as it's back out of the sand */
+  waveNext: boolean;
 };
 
 function Crabs() {
@@ -114,7 +118,7 @@ function Crabs() {
     while (out.length < n) {
       const a = rnd() * Math.PI * 2;
       if (!beachAt(a, tmp)) continue;
-      out.push({ a, dir: rnd() < 0.5 ? 1 : -1, state: "idle", timer: rnd() * 3, sink: 0, pokes: 0, pokeT: 0, snap: 0, pos: tmp.clone() });
+      out.push({ a, dir: rnd() < 0.5 ? 1 : -1, state: "idle", timer: rnd() * 3, sink: 0, pokes: 0, pokeT: 0, snap: 0, pos: tmp.clone(), waving: false, waveNext: false });
     }
     return out;
   }, []);
@@ -133,6 +137,21 @@ function Crabs() {
       on("impact", ({ pos, strength }) => near(pos, 1 + strength * 0.5)),
       on("splash", ({ pos, strength }) => near(pos, 1 + strength)),
       on("gust", ({ pos }) => near(pos, 1.6)),
+      on("conch", () => {
+        if (world.night > 0.8 || world.w.storm > 0.6) return;
+        crabs.forEach((c, i) => {
+          if (c.state === "hidden") {
+            c.timer = Math.min(c.timer, 0.3 + i * 0.35);
+            c.waveNext = true;
+          } else {
+            c.state = "snap";
+            c.snap = 1.6;
+            c.waving = true;
+            setTimeout(() => sfx("snap", c.pos, 0.6, 1.1 + i * 0.1), 300 + i * 200);
+          }
+        });
+        setTimeout(() => emit("conchAnswer", { who: "crabs" }), 1100);
+      }),
     ];
     crabApi.hide = hide;
     return () => offs.forEach((o) => o());
@@ -162,6 +181,13 @@ function Crabs() {
           }
           c.state = "idle";
           c.timer = 1.5;
+          if (c.waveNext) {
+            c.waveNext = false;
+            c.state = "snap";
+            c.snap = 1.6;
+            c.waving = true;
+            sfx("snap", c.pos, 0.6, 1.2);
+          }
           beachAt(c.a, c.pos);
           spawnDust(c.pos.clone().add(new Vector3(0, 0.05, 0)), SAND, 0.4);
         }
@@ -170,6 +196,7 @@ function Crabs() {
         if (c.state === "snap") {
           c.snap -= dt;
           if (c.snap <= 0) {
+            c.waving = false;
             c.state = "idle";
             c.timer = 1;
           }
@@ -203,7 +230,12 @@ function Crabs() {
       g.visible = c.sink < 0.99;
       const cl = claws.current[i];
       if (cl) {
-        const up = c.state === "snap" ? Math.abs(Math.sin(c.snap * 18)) : Math.max(0, Math.sin(t * 1.3 + i * 2)) * 0.15;
+        const up =
+          c.state === "snap"
+            ? c.waving
+              ? 0.75 + Math.sin(c.snap * 11) * 0.35
+              : Math.abs(Math.sin(c.snap * 18))
+            : Math.max(0, Math.sin(t * 1.3 + i * 2)) * 0.15;
         cl.position.y = up * 0.25;
         cl.rotation.x = -up * 0.6;
       }
@@ -223,6 +255,7 @@ function Crabs() {
     }
     c.state = "snap";
     c.snap = 0.6;
+    c.waving = false;
     c.dir *= -1;
     sfx("snap", c.pos, 0.8, 1 + Math.random() * 0.2);
   };
@@ -300,6 +333,12 @@ function Frog() {
     const offs = [
       on("disturb", ({ pos, radius }) => near(pos, radius) && jump()),
       on("splash", ({ pos }) => near(pos, 0.5) && jump()),
+      on("conch", () => {
+        if (world.w.snow > 0.5) return;
+        [350, 900, 1500].forEach((d) => setTimeout(croak, d));
+        setTimeout(jump, 1950);
+        setTimeout(() => emit("conchAnswer", { who: "frog" }), 1000);
+      }),
       on("watered", ({ pos }) => {
         if (!near(pos, 0.6)) return;
         const st = s.current;

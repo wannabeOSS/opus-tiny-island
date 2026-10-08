@@ -713,7 +713,7 @@ function Lightning() {
 
   useEffect(
     () =>
-      on("lightning", ({ pos, target }) => {
+      on("lightning", ({ pos, target, small }) => {
         const to = target ? target.clone() : new Vector3(pos.x + (Math.random() - 0.5) * 4, 0, pos.z + (Math.random() - 0.5) * 4);
         const wl = waterLevelAt(to.x, to.z);
         to.y = wl !== null ? wl : height(to.x, to.z);
@@ -723,8 +723,8 @@ function Lightning() {
           m.geometry = boltGeometry(pos, to);
         }
         st.current.t = 0;
-        world.flash = 1;
-        emit("disturb", { pos: to, radius: 8 });
+        world.flash = small ? 0.3 : 1;
+        emit("disturb", { pos: to, radius: small ? 3 : 8 });
         if (wl !== null) {
           addRipple(to.x, to.z, 1.6);
           spawnSplash(to.clone(), 1);
@@ -732,10 +732,10 @@ function Lightning() {
           spawnDust(to.clone(), new Color("#d8d0c0"), 1);
           spawnSparkle(to.clone().setY(to.y + 0.2), 14, new Color("#fff3c4"), 0.4, 1.4);
         }
-        sfx("zap", to, 0.8);
+        sfx("zap", to, small ? 0.5 : 0.8, small ? 1.4 : 1);
         // thunder arrives a beat later the farther away it is
-        const delay = 250 + Math.min(2000, to.length() * 40);
-        setTimeout(() => sfx("thunder", to, 0.9), delay);
+        const delay = small ? 120 : 250 + Math.min(2000, to.length() * 40);
+        setTimeout(() => sfx("thunder", to, small ? 0.3 : 0.9), delay);
       }),
     [],
   );

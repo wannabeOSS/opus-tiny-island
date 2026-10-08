@@ -84,7 +84,7 @@ export type WorldEvents = {
   shake: { pos: Vector3; id: string };
   sfx: { name: string; pos?: Vector3; strength?: number; pitch?: number };
   /** pos = where the bolt starts (cloud base); target = where it lands */
-  lightning: { pos: Vector3; target?: Vector3 };
+  lightning: { pos: Vector3; target?: Vector3; small?: boolean };
   whale: Record<string, never>;
   shootingStar: Record<string, never>;
   weather: { kind: WeatherKind };
@@ -99,14 +99,20 @@ export type WorldEvents = {
   leaves: { pos: Vector3; n: number; color?: string; spread?: number };
   seedPlanted: { pos: Vector3 };
   seedTouched: Record<string, never>;
-  /** watering can (or similar) soaked this spot */
+  /** rain from the pocket cloud soaked this spot */
   watered: { pos: Vector3; amount: number };
   /** crumbs landed; on water they're fish food, on land birds come */
   crumbs: { pos: Vector3; water: boolean };
-  plantSprout: { pos: Vector3 };
+  plantSprout: { pos: Vector3; color?: string };
   skip: { pos: Vector3; count: number };
   /** a strong gust from the breeze tool at pos, direction dir (xz) */
   gust: { pos: Vector3; dir: Vector3; strength: number };
+  /** the sun mirror is shining here (a moonbeam at night) */
+  sunbeam: { pos: Vector3; night: boolean };
+  /** the conch was blown at pos */
+  conch: { pos: Vector3; sea: boolean };
+  /** a creature answered the conch */
+  conchAnswer: { who: string };
 };
 
 export type PropKind =
@@ -119,8 +125,7 @@ export type PropKind =
   | "seed"
   | "cone"
   | "starfish"
-  | "paperboat"
-  | "lantern";
+  | "seedball";
 
 type Handler<T> = (payload: T) => void;
 const handlers = new Map<string, Set<Handler<unknown>>>();

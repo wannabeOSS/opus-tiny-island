@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { toolState, type ToolKind } from "../lib/tools";
 import { cursorState, type CursorKind } from "../world/cursor";
-import { HandFist, HandGrab, HandOpen, HandPoint, TOOL_ICON } from "./icons";
+import { world } from "../lib/world";
+import { HandFist, HandGrab, HandOpen, HandPoint, Pinwheel, TOOL_ICON } from "./icons";
 import styles from "./hud.module.css";
 
 const SIZE = 44;
@@ -13,18 +14,19 @@ const HOTSPOT: Record<string, [number, number]> = {
   pointer: [16, 4],
   grab: [21, 14],
   grabbing: [21, 16],
-  breeze: [22, 22],
-  water: [37, 15],
-  seeds: [22, 30],
-  crumbs: [22, 34],
-  pebble: [22, 22],
-  float: [22, 30],
+  pinwheel: [22, 17],
+  cloud: [22, 34],
+  mirror: [18, 18],
+  bubbles: [26, 19],
+  seedbomb: [22, 27],
+  conch: [12, 31],
 };
 
 type Look = { tool: ToolKind; kind: CursorKind; active: boolean };
 
 export function Cursor() {
   const el = useRef<HTMLDivElement>(null);
+  const rotor = useRef<SVGGElement>(null);
   const [look, setLook] = useState<Look>({ tool: "hand", kind: "default", active: false });
   const [enabled, setEnabled] = useState(false);
 
@@ -42,6 +44,7 @@ export function Cursor() {
     let raf = 0;
     let last = "";
     let wob = 0;
+    let spin = 0;
     const move = (e: PointerEvent) => {
       if (e.pointerType === "touch") {
         pos.show = false;
@@ -70,11 +73,20 @@ export function Cursor() {
       const [hx, hy] = HOTSPOT[hk] ?? [22, 22];
       wob += 0.25;
       let rot = 0;
-      if (tool === "water" && active) rot = -38;
-      else if (tool === "breeze" && active) rot = Math.sin(wob) * 12;
-      else if (tool === "crumbs" && active) rot = Math.sin(wob * 1.4) * 10 - 10;
-      else if (tool === "seeds" && active) rot = Math.sin(wob * 1.2) * 8;
-      const press = active && (tool === "pebble" || tool === "float") ? 0.88 : 1;
+      let press = 1;
+      if (tool === "cloud") rot = Math.sin(wob * 0.3) * 4 + (active ? Math.sin(wob * 2.2) * 2 : 0);
+      else if (tool === "mirror" && active) rot = -18 + Math.sin(wob * 0.5) * 5;
+      else if (tool === "bubbles" && active) rot = Math.sin(wob * 0.8) * 14;
+      else if (tool === "seedbomb" && active) press = 0.86;
+      else if (tool === "conch" && active) {
+        rot = -14;
+        press = 1.12;
+      }
+      if (tool === "pinwheel") {
+        const drag = Math.hypot(toolState.dragVel.x, toolState.dragVel.y);
+        spin += 2 + world.windStrength * 6 + (active ? Math.min(40, drag / 60) : 0);
+        rotor.current?.setAttribute("transform", `rotate(${spin % 360} 16 12.5)`);
+      }
       d.style.opacity = pos.show ? "1" : "0";
       d.style.transform = `translate3d(${pos.x - hx}px, ${pos.y - hy}px, 0) rotate(${rot}deg) scale(${press})`;
       d.style.transformOrigin = `${hx}px ${hy}px`;
@@ -108,7 +120,7 @@ export function Cursor() {
       : TOOL_ICON[look.tool];
   return (
     <div ref={el} className={styles.cursor} aria-hidden="true">
-      <Icon size={SIZE} />
+      {look.tool === "pinwheel" ? <Pinwheel size={SIZE} rotorRef={rotor} /> : <Icon size={SIZE} />}
     </div>
   );
 }

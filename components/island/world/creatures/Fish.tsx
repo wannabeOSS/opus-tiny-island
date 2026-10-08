@@ -20,7 +20,8 @@ import { POND } from "../../lib/layout";
 import { angleDelta, clamp, mulberry32 } from "../../lib/math";
 import { discover } from "../../lib/secrets";
 import { height, inPond, POND_LEVEL } from "../../lib/terrain";
-import { U, addPondRipple, addRipple, on, sfx, waveHeight, world } from "../../lib/world";
+import { U, addPondRipple, addRipple, emit, on, sfx, waveHeight, world } from "../../lib/world";
+import { bubbles, popBubble, type Bubble } from "../Bubbles";
 import { spawnSparkle, spawnSplash } from "../effects/Particles";
 
 type Fish = {
@@ -40,6 +41,8 @@ type Fish = {
   golden: boolean;
   pond: boolean;
   retarget: number;
+  /** the bubble this fish is leaping for */
+  prey: Bubble | null;
 };
 
 type Food = { pos: Vector3; left: number; pond: boolean; t: number };
@@ -80,6 +83,34 @@ function validSea(x: number, z: number) {
   return h < -0.35 && h > -2.4 && Math.hypot(x, z) < 21;
 }
 
+/** A bubble drifting low over the sea near this fish, worth swimming under. */
+function lureFor(f: Fish) {
+  for (const b of bubbles) {
+    if (b.dead || b.hunted || b.pos.y > 1.05) continue;
+    if (Math.hypot(b.pos.x - f.x, b.pos.z - f.z) < 6 && height(b.pos.x, b.pos.z) < -0.5) return b;
+  }
+  return null;
+}
+
+/** One helping eaten; enough of them and the golden fish shows up. */
+function fed(f: Fish, at: Vector3) {
+  if (f.pond) return;
+  world.fishFed++;
+  if (world.fishFed < 4 || world.goldenFish) return;
+  world.goldenFish = true;
+  f.golden = true;
+  f.size = 0.34;
+  f.color.copy(GOLD);
+  if (f.jump <= 0) {
+    f.jump = 0.0001;
+    f.jx = f.x;
+    f.jz = f.z;
+  }
+  spawnSparkle(new Vector3(f.x, 0.2, f.z), 24, GOLD, 0.6, 1);
+  sfx("sparkle", at, 0.8);
+  discover("goldfish");
+}
+
 export function Fish() {
   const mesh = useRef<InstancedMesh>(null);
   const shadows = useRef<InstancedMesh>(null);
@@ -89,7 +120,8 @@ export function Fish() {
   const shadowGeo = useMemo(() => new CircleGeometry(0.5, 12).rotateX(-Math.PI / 2), []);
   const dummy = useMemo(() => new Object3D(), []);
   const food = useRef<Food[]>([]);
-  const st = useRef({ jumpT: 8, fedSessions: 0 });
+  const st = useRef({ jumpT: 8, fedSessions: 0, bubbleT: 0 });
+  const gather = useRef<{ pos: Vector3; until: number; pond: boolean } | null>(null);
 
   const fish = useMemo<Fish[]>(() => {
     const rnd = mulberry32(404);
@@ -106,7 +138,7 @@ export function Fish() {
         x, z, y: -0.4, heading: rnd() * 6, speed: 0.5, tx: x, tz: z, flee: 0, jump: 0, jx: 0, jz: 0,
         size: 0.2 + rnd() * 0.12,
         color: new Color(seaCols[Math.floor(rnd() * seaCols.length)]),
-        golden: false, pond: false, retarget: 0,
+        golden: false, pond: false, retarget: 0, prey: null,
       });
     }
     const koi = ["#f08a3c", "#fbfbf6", "#e8502e"];
@@ -114,7 +146,7 @@ export function Fish() {
       const a = (i / POND_N) * Math.PI * 2;
       out.push({
         x: POND.x + Math.cos(a) * 0.5, z: POND.z + Math.sin(a) * 0.5, y: POND_LEVEL - 0.07, heading: a + 1.6, speed: 0.3,
-        tx: POND.x, tz: POND.z, flee: 0, jump: 0, jx: 0, jz: 0, size: 0.17, color: new Color(koi[i]), golden: false, pond: true, retarget: 0,
+        tx: POND.x, tz: POND.z, flee: 0, jump: 0, jx: 0, jz: 0, size: 0.17, color: new Color(koi[i]), golden: false, pond: true, retarget: 0, prey: null,
       });
     }
     return out;
@@ -147,6 +179,13 @@ export function Fish() {
       on("food", ({ pos }) => {
         food.current.push({ pos: pos.clone(), left: 4, pond: inPond(pos.x, pos.z), t: world.elapsed });
       }),
+      on("conch", ({ pos, sea }) => {
+        const pond = inPond(pos.x, pos.z);
+        if (!sea && !pond) return;
+        gather.current = { pos: pos.clone(), until: world.elapsed + 9, pond };
+        const near = fish.some((f) => f.pond === pond && Math.hypot(f.x - pos.x, f.z - pos.z) < 10);
+        if (near) setTimeout(() => emit("conchAnswer", { who: "fish" }), 1300);
+      }),
     ];
     return () => offs.forEach((o) => o());
   }, [fish]);
@@ -174,6 +213,33 @@ export function Fish() {
       }
     }
 
+    // fish leap for bubbles drifting low over the water
+    s.bubbleT -= dt;
+    if (s.bubbleT < 0 && bubbles.length) {
+      s.bubbleT = 0.4;
+      for (const b of bubbles) {
+        if (b.dead || b.hunted || b.pos.y > 1.05 || height(b.pos.x, b.pos.z) > -0.5) continue;
+        let best: Fish | null = null;
+        let bd = 1.4;
+        for (const f of fish) {
+          if (f.pond || f.jump > 0 || f.flee > 0) continue;
+          const d = Math.hypot(f.x - b.pos.x, f.z - b.pos.z);
+          if (d < bd) {
+            bd = d;
+            best = f;
+          }
+        }
+        if (!best) continue;
+        b.hunted = true;
+        best.prey = b;
+        best.heading = Math.atan2(b.pos.x - best.x, b.pos.z - best.z);
+        best.jx = b.pos.x - Math.sin(best.heading) * 0.65;
+        best.jz = b.pos.z - Math.cos(best.heading) * 0.65;
+        best.jump = 0.0001;
+        break;
+      }
+    }
+
     fish.forEach((f, i) => {
       if (f.jump > 0) {
         // leap: a little arc out of the water
@@ -183,6 +249,14 @@ export function Fish() {
         f.x = f.jx + Math.sin(f.heading) * p * 1.3;
         f.z = f.jz + Math.cos(f.heading) * p * 1.3;
         f.y = -0.3 + Math.sin(p * Math.PI) * (0.75 + f.size);
+        if (f.prey && prev < 0.5 && f.jump >= 0.5) {
+          const b = f.prey;
+          f.prey = null;
+          if (!b.dead && Math.hypot(b.pos.x - f.x, b.pos.z - f.z) < 0.7) {
+            popBubble(b);
+            fed(f, b.pos);
+          }
+        }
         if (prev < 0.12 && f.jump >= 0.12) {
           spawnSplash(new Vector3(f.x, 0, f.z), 0.25);
           addRipple(f.x, f.z, 0.4);
@@ -218,21 +292,22 @@ export function Fish() {
               else addRipple(f.x, f.z, 0.1);
               sfx("bloop", target.pos, 0.3, 1.4 + Math.random() * 0.4);
             }
-            if (target.left <= 0 && !f.pond) {
-              world.fishFed++;
-              if (world.fishFed >= 4 && !world.goldenFish) {
-                world.goldenFish = true;
-                f.golden = true;
-                f.size = 0.34;
-                f.color.copy(GOLD);
-                f.jump = 0.0001;
-                f.jx = f.x;
-                f.jz = f.z;
-                spawnSparkle(new Vector3(f.x, 0.2, f.z), 24, GOLD, 0.6, 1);
-                sfx("sparkle", target.pos, 0.8);
-                discover("goldfish");
-              }
-            }
+            if (target.left <= 0 && !f.pond) fed(f, target.pos);
+          }
+        } else if (!f.pond && f.flee <= 0 && lureFor(f)) {
+          const b = lureFor(f)!;
+          f.tx = b.pos.x;
+          f.tz = b.pos.z;
+        } else if (gather.current && gather.current.until > t && gather.current.pond === f.pond && Math.hypot(gather.current.pos.x - f.x, gather.current.pos.z - f.z) < 10 && f.flee <= 0) {
+          // circle round whoever blew the conch
+          const gp = gather.current.pos;
+          const a = t * 0.6 + i * 1.7;
+          const rr = f.pond ? 0.35 : 0.7 + (i % 3) * 0.25;
+          f.tx = gp.x + Math.cos(a) * rr;
+          f.tz = gp.z + Math.sin(a) * rr;
+          if (!f.pond && !validSea(f.tx, f.tz)) {
+            f.tx = f.x;
+            f.tz = f.z;
           }
         } else if (f.retarget < 0 || Math.hypot(f.tx - f.x, f.tz - f.z) < 0.4) {
           f.retarget = 4 + Math.random() * 6;
