@@ -19,6 +19,15 @@ import { Boat, Buoy, Dock, Laundry } from "./world/Shore";
 import { Props } from "./world/Props";
 import { Pond } from "./world/Pond";
 import { SkyToys } from "./world/SkyToys";
+import { Weather } from "./world/Weather";
+import { MysteryTree } from "./world/MysteryTree";
+import { Fish } from "./world/creatures/Fish";
+import { Birds } from "./world/creatures/Birds";
+import { Bugs } from "./world/creatures/Bugs";
+import { Critters } from "./world/creatures/Critters";
+import { Whale } from "./world/creatures/Whale";
+import { Tools } from "./systems/Tools";
+import { Sound } from "./systems/Sound";
 
 export default function Experience() {
   return (
@@ -49,7 +58,16 @@ export default function Experience() {
       <Buoy />
       <Props />
       <SkyToys />
+      <Weather />
+      <MysteryTree />
+      <Fish />
+      <Birds />
+      <Bugs />
+      <Critters />
+      <Whale />
       <Particles />
+      <Tools />
+      <Sound />
       <CameraRig />
     </Canvas>
   );

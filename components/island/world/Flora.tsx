@@ -7,7 +7,6 @@ import {
   Color,
   CylinderGeometry,
   InstancedMesh,
-  Matrix4,
   MeshStandardMaterial,
   Object3D,
   SphereGeometry,
@@ -21,7 +20,7 @@ import { merge, place, prep } from "../lib/geo";
 import { BOUNCY_MUSHROOM, FLOWER_PATCHES, OLD_TREE, ROUND_TREES, SEA_STACKS, CLIFF } from "../lib/layout";
 import { mulberry32, noise2, smoothstep } from "../lib/math";
 import { patchMaterial } from "../lib/patch";
-import { distToPath, height, islandD, normalAt } from "../lib/terrain";
+import { distToPath, height, islandD } from "../lib/terrain";
 import { emit, markInput, on, sfx, world } from "../lib/world";
 import { hoverable } from "./cursor";
 import { pools, spawnDust, spawnPetals, spawnSparkle } from "./effects/Particles";

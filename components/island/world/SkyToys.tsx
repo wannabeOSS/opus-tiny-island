@@ -25,6 +25,7 @@ import { blob, merge, place, sphericalNormals } from "../lib/geo";
 import { clamp, damp, mulberry32, smoothstep } from "../lib/math";
 import { height, waterLevelAt } from "../lib/terrain";
 import { U, addRipple, emit, markInput, on, sfx, world } from "../lib/world";
+import { discover } from "../lib/secrets";
 import { lockCursor, setCursor } from "./cursor";
 import { pools, spawnDust, spawnSparkle, spawnSplash } from "./effects/Particles";
 
@@ -148,6 +149,7 @@ function CelestialHandle({ body }: { body: "sun" | "moon" }) {
     s.lastHour = Math.floor(world.time);
     world.draggingTime = true;
     if (body === "sun") world.sunTouched = true;
+    discover("timekeeper");
     lockCursor("grabbing");
     if (controls) (controls as unknown as { enabled: boolean }).enabled = false;
     sfx("chime", undefined, 0.35, body === "sun" ? 1.5 : 1.1);
@@ -158,6 +160,7 @@ function CelestialHandle({ body }: { body: "sun" | "moon" }) {
     e.stopPropagation();
     // a wish on the moon
     emit("shootingStar", {});
+    discover("wish");
   };
 
   return (
@@ -490,6 +493,7 @@ function Clouds() {
       c.pokes = [];
       const target = new Vector3(c.pos.x + (Math.random() - 0.5) * 3, 0, c.pos.z + (Math.random() - 0.5) * 3);
       emit("lightning", { pos: c.pos.clone().setY(c.pos.y - 1), target });
+      discover("temper");
     }
   };
 

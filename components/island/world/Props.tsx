@@ -62,6 +62,7 @@ export type Prop = {
   bounce: number;
   lastImpact: number;
   skips: number;
+  variant: number;
 };
 
 const KIND: Record<PropKind, { r: number; floats: boolean; food: boolean; bounce: number; mass: number }> = {
@@ -105,6 +106,7 @@ function makeProp(kind: PropKind, pos: Vector3, vel?: Vector3): Prop {
     bounce: k.bounce,
     lastImpact: -10,
     skips: 0,
+    variant: Math.floor(Math.random() * 3),
   };
 }
 
@@ -182,7 +184,7 @@ function useAssets() {
 
 /* ---------------- one prop view ---------------- */
 function PropView({ p, assets, onGrab }: { p: Prop; assets: ReturnType<typeof useAssets>; onGrab: (p: Prop, e: ThreeEvent<PointerEvent>) => void }) {
-  const variant = useMemo(() => Math.floor(Math.random() * 3), []);
+  const variant = p.variant;
   const mats = assets.mat[p.kind];
   const mat = mats[variant % mats.length];
   return (
@@ -238,9 +240,36 @@ function surfaceOf(x: number, z: number, y: number): "sand" | "grass" | "rock" |
 }
 
 /* ---------------- the system ---------------- */
+function scatterInitialProps() {
+  if (props.length > 0) return;
+  const beach = (a: number, r: number) => {
+    const x = Math.cos(a) * r;
+    const z = Math.sin(a) * r;
+    return new Vector3(x, groundAt(x, z) + 0.07, z);
+  };
+  const init: [PropKind, Vector3][] = [
+    ["pebble", beach(0.55, 8.9)],
+    ["pebble", beach(0.6, 9.1)],
+    ["pebble", beach(0.5, 9.25)],
+    ["shell", beach(1.0, 9.15)],
+    ["pebble", beach(1.45, 8.8)],
+    ["starfish", beach(0.15, 9.3)],
+    ["pebble", beach(2.05, 9.0)],
+    ["shell", beach(-0.2, 9.2)],
+    ["coconut", beach(0.85, 8.3)],
+    ["pebble", new Vector3(CABIN.x + 1.6, height(CABIN.x + 1.6, CABIN.z + 1.1) + 0.06, CABIN.z + 1.1)],
+    ["stick", new Vector3(1.2, height(1.2, 0.2) + 0.05, 0.2)],
+    ["pebble", new Vector3(POND.x + 1.5, height(POND.x + 1.5, POND.z + 0.4) + 0.06, POND.z + 0.4)],
+  ];
+  init.forEach(([k, p]) => props.push(makeProp(k, p)));
+}
+
 export function Props() {
   const assets = useAssets();
-  const [list, setList] = useState<Prop[]>([]);
+  const [list, setList] = useState<Prop[]>(() => {
+    scatterInitialProps();
+    return props.filter((p) => p.state !== "dead");
+  });
   const { camera, gl, controls } = useThree();
   const drag = useRef({
     prop: null as Prop | null,
@@ -276,39 +305,30 @@ export function Props() {
     return p;
   };
 
-  // initial scatter + external spawns
+  // external spawns
   useEffect(() => {
-    if (props.length === 0) {
-      const beach = (a: number, r: number) => {
-        const x = Math.cos(a) * r;
-        const z = Math.sin(a) * r;
-        return new Vector3(x, groundAt(x, z) + 0.07, z);
-      };
-      const init: [PropKind, Vector3][] = [
-        ["pebble", beach(0.55, 8.9)],
-        ["pebble", beach(0.6, 9.1)],
-        ["pebble", beach(0.5, 9.25)],
-        ["shell", beach(1.0, 9.15)],
-        ["pebble", beach(1.45, 8.8)],
-        ["starfish", beach(0.15, 9.3)],
-        ["pebble", beach(2.05, 9.0)],
-        ["shell", beach(-0.2, 9.2)],
-        ["coconut", beach(0.85, 8.3)],
-        ["pebble", new Vector3(CABIN.x + 1.6, height(CABIN.x + 1.6, CABIN.z + 1.1) + 0.06, CABIN.z + 1.1)],
-        ["stick", new Vector3(1.2, height(1.2, 0.2) + 0.05, 0.2)],
-        ["pebble", new Vector3(POND.x + 1.5, height(POND.x + 1.5, POND.z + 0.4) + 0.06, POND.z + 0.4)],
-      ];
-      init.forEach(([k, p]) => props.push(makeProp(k, p)));
-      sync();
-    } else sync();
 
     const off = on("spawnProp", ({ kind, pos, vel }) => {
       spawn(kind, pos, vel ?? new Vector3());
     });
-    const offReset = on("reset", () => undefined);
+    const offGust = on("gust", ({ pos, dir, strength }) => {
+      for (const p of props) {
+        if (p.state !== "rest" && p.state !== "float") continue;
+        const d = Math.hypot(p.pos.x - pos.x, p.pos.z - pos.z);
+        if (d > 2.2 || KIND[p.kind].mass > 1.2) continue;
+        const k = (1 - d / 2.2) * strength / Math.max(0.3, KIND[p.kind].mass);
+        if (p.state === "float") {
+          p.vel.x += dir.x * k * 0.6;
+          p.vel.z += dir.z * k * 0.6;
+        } else if (k > 0.5) {
+          p.vel.set(dir.x * k * 1.4, 0.6 + k * 0.4, dir.z * k * 1.4);
+          p.state = "air";
+        }
+      }
+    });
     return () => {
       off();
-      offReset();
+      offGust();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

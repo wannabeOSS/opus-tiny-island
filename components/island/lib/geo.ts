@@ -14,7 +14,7 @@ import { noise2 } from "./math";
 
 /** Normalizes a geometry so it can be merged with others (non-indexed, position/normal/color only). */
 export function prep(g: BufferGeometry, color?: Color | ((p: Vector3, i: number) => Color)) {
-  let geo = g.index ? g.toNonIndexed() : g;
+  const geo = g.index ? g.toNonIndexed() : g;
   if (geo !== g) g.dispose();
   geo.deleteAttribute("uv");
   if (!geo.attributes.normal) geo.computeVertexNormals();

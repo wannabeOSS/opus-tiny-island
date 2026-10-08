@@ -22,7 +22,7 @@ import { OLD_TREE, PALMS, PINES, ROUND_TREES } from "../lib/layout";
 import { mulberry32, noise2 } from "../lib/math";
 import { patchMaterial } from "../lib/patch";
 import { height } from "../lib/terrain";
-import { emit, markInput, on, sfx, world, type PropKind } from "../lib/world";
+import { emit, markInput, sfx, world, type PropKind } from "../lib/world";
 import { hoverable } from "./cursor";
 
 /* ---------------- shared materials ---------------- */
@@ -221,7 +221,7 @@ const fruitGeo = new SphereGeometry(0.075, 12, 8);
 function RoundTree({ x, z, s, seed, id }: { x: number; z: number; s: number; seed: number; id: string }) {
   const g = useMemo(() => roundTreeGeo(seed), [seed]);
   const fruits = useMemo<FruitSlot[]>(() => g.fruits.map((p) => ({ pos: p.clone().multiplyScalar(s), gone: 0 })), [g, s]);
-  const t = useTree({
+  const { group, y0, onClick } = useTree({
     id,
     x,
     z,
@@ -234,8 +234,8 @@ function RoundTree({ x, z, s, seed, id }: { x: number; z: number; s: number; see
     fruits,
   });
   return (
-    <group position={[x, t.y0 - 0.05, z]}>
-      <group ref={t.group} scale={s} onClick={t.onClick} {...hoverable("pointer")}>
+    <group position={[x, y0 - 0.05, z]}>
+      <group ref={group} scale={s} onClick={onClick} {...hoverable("pointer")}>
         <mesh geometry={g.bark} material={mats.bark} castShadow receiveShadow />
         <mesh geometry={g.canopy} material={mats.leaf} castShadow receiveShadow />
         {fruits.map((f, i) => (
@@ -303,7 +303,7 @@ function Pine({ x, z, s, seed, id }: { x: number; z: number; s: number; seed: nu
     ],
     [s],
   );
-  const t = useTree({
+  const { group, y0, onClick } = useTree({
     id,
     x,
     z,
@@ -317,8 +317,8 @@ function Pine({ x, z, s, seed, id }: { x: number; z: number; s: number; seed: nu
     stiffness: 1.4,
   });
   return (
-    <group position={[x, t.y0 - 0.05, z]}>
-      <group ref={t.group} scale={s} onClick={t.onClick} {...hoverable("pointer")}>
+    <group position={[x, y0 - 0.05, z]}>
+      <group ref={group} scale={s} onClick={onClick} {...hoverable("pointer")}>
         <mesh geometry={g.bark} material={mats.bark} castShadow receiveShadow />
         <mesh geometry={g.canopy} material={mats.leaf} castShadow receiveShadow />
       </group>
@@ -402,7 +402,7 @@ function Palm({ a, r, lean, s, seed, id }: { a: number; r: number; lean: number;
   const z = Math.sin(a) * r;
   const g = useMemo(() => palmGeo(seed, lean, a), [seed, lean, a]);
   const fruits = useMemo<FruitSlot[]>(() => g.nuts.map((p) => ({ pos: p.clone().multiplyScalar(s), gone: 0 })), [g, s]);
-  const t = useTree({
+  const { group, y0, onClick } = useTree({
     id,
     x,
     z,
@@ -416,8 +416,8 @@ function Palm({ a, r, lean, s, seed, id }: { a: number; r: number; lean: number;
     stiffness: 0.7,
   });
   return (
-    <group position={[x, t.y0 - 0.05, z]}>
-      <group ref={t.group} scale={s} onClick={t.onClick} {...hoverable("pointer")}>
+    <group position={[x, y0 - 0.05, z]}>
+      <group ref={group} scale={s} onClick={onClick} {...hoverable("pointer")}>
         <mesh geometry={g.bark} material={mats.bark} castShadow receiveShadow />
         <mesh geometry={g.fronds} material={mats.frond} castShadow receiveShadow />
         {fruits.map((f, i) => (
@@ -479,7 +479,7 @@ function OldTree() {
     ],
     [g],
   );
-  const t = useTree({
+  const { group, y0, onClick } = useTree({
     id: "old-tree",
     x: OLD_TREE.x,
     z: OLD_TREE.z,
@@ -512,8 +512,8 @@ function OldTree() {
   };
 
   return (
-    <group position={[OLD_TREE.x, t.y0 - 0.08, OLD_TREE.z]} rotation-y={0.5}>
-      <group ref={t.group} onClick={t.onClick} {...hoverable("pointer")}>
+    <group position={[OLD_TREE.x, y0 - 0.08, OLD_TREE.z]} rotation-y={0.5}>
+      <group ref={group} onClick={onClick} {...hoverable("pointer")}>
         <mesh geometry={g.bark} material={mats.bark} castShadow receiveShadow />
         <mesh geometry={g.canopy} material={mats.leaf} castShadow receiveShadow />
       </group>
@@ -528,7 +528,6 @@ function OldTree() {
 
 /* ---------------- all trees ---------------- */
 export function Trees() {
-  useEffect(() => on("reset", () => undefined), []);
   return (
     <group>
       {ROUND_TREES.map((t, i) => (

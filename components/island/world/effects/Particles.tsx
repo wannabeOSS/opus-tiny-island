@@ -1,7 +1,7 @@
 "use client";
 
 import { useFrame, useThree } from "@react-three/fiber";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -13,7 +13,7 @@ import {
   ShaderMaterial,
   Vector3,
 } from "three";
-import { world } from "../../lib/world";
+import { on, world } from "../../lib/world";
 
 class Pool {
   n: number;
@@ -183,6 +183,31 @@ export function Particles() {
     p.raycast = () => null;
     return p;
   }, []);
+
+  useEffect(
+    () =>
+      on("leaves", ({ pos, n, color, spread = 0.8 }) => {
+        const base = new Color(color ?? "#8fb84e");
+        for (let i = 0; i < n; i++) {
+          c.copy(base).offsetHSL((rnd() - 0.5) * 0.05, 0, (rnd() - 0.5) * 0.12);
+          pools.soft.spawn({
+            x: pos.x + (rnd() - 0.5) * spread * 1.4,
+            y: pos.y + (rnd() - 0.5) * spread * 0.6,
+            z: pos.z + (rnd() - 0.5) * spread * 1.4,
+            vx: (rnd() - 0.5) * 0.8,
+            vy: 0.3 + rnd() * 0.6,
+            vz: (rnd() - 0.5) * 0.8,
+            color: c.clone(),
+            size: 0.07 + rnd() * 0.05,
+            life: 2.2 + rnd() * 1.6,
+            gravity: 0.9,
+            drag: 1.6,
+            wind: 2.4,
+          });
+        }
+      }),
+    [],
+  );
 
   useFrame((_, dt) => {
     const d = Math.min(dt, 1 / 20);

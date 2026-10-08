@@ -24,3 +24,9 @@ body {
   position: fixed;
   inset: 0;
 }
+
+@media (pointer: fine) {
+  .island-custom-cursor .island-root canvas {
+    cursor: none !important;
+  }
+}
