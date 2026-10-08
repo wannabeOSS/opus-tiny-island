@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "89496d5dd00f4810205f351759594fc2742bf8eea85a2f2b2d1de59f4bd91576"
+    },
+    "visual-qa": {
+      "source": "nimadorostkar/Claude-Skills-collection",
+      "sourceType": "github",
+      "skillPath": "skills/frontend/visual-qa/SKILL.md",
+      "computedHash": "a902fa75b45a4babce9ddabd39508da37fe485c9a107bdb2a57cbbffa3ea403e"
+    }
+  }
+}
