@@ -20,7 +20,7 @@ import { angleDelta, mulberry32 } from "../../lib/math";
 import { discover } from "../../lib/secrets";
 import { distToPath, height, normalAt, POND_LEVEL } from "../../lib/terrain";
 import { addPondRipple, emit, idleSeconds, markInput, on, sfx, world } from "../../lib/world";
-import { hoverable } from "../cursor";
+import { hoverable, shown } from "../cursor";
 import { spawnDust, spawnSparkle } from "../effects/Particles";
 import { LILY_PADS } from "../Pond";
 
@@ -115,7 +115,8 @@ function Crabs() {
     const rnd = mulberry32(5);
     const out: Crab[] = [];
     const tmp = new Vector3();
-    while (out.length < n) {
+    let tries = 0;
+    while (out.length < n && tries++ < 500) {
       const a = rnd() * Math.PI * 2;
       if (!beachAt(a, tmp)) continue;
       out.push({ a, dir: rnd() < 0.5 ? 1 : -1, state: "idle", timer: rnd() * 3, sink: 0, pokes: 0, pokeT: 0, snap: 0, pos: tmp.clone(), waving: false, waveNext: false });
@@ -160,7 +161,7 @@ function Crabs() {
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 1 / 20);
     const t = world.elapsed;
-    const tmp = new Vector3();
+    const tmp = crabTmp;
     crabs.forEach((c, i) => {
       const g = groups.current[i];
       if (!g) return;
@@ -221,11 +222,16 @@ function Crabs() {
         }
       }
       beachAt(c.a, c.pos);
-      const n = normalAt(c.pos.x, c.pos.z);
+      const n = normalAt(c.pos.x, c.pos.z, crabNormal);
       const out = Math.atan2(c.pos.x, c.pos.z);
       const bob = walking ? Math.abs(Math.sin(t * 22 + i)) * 0.012 : 0;
       g.position.set(c.pos.x, c.pos.y - c.sink * 0.13 + bob, c.pos.z);
-      g.rotation.set(n.z * 0.5, out + (walking ? Math.sin(t * 22) * 0.06 : 0), -n.x * 0.5, "YXZ");
+      // tilt with the slope, measured in the crab's own (yawed) frame
+      const co = Math.cos(out);
+      const so = Math.sin(out);
+      const lx = n.x * co - n.z * so;
+      const lz = n.x * so + n.z * co;
+      g.rotation.set(lz * 0.5, out + (walking ? Math.sin(t * 22) * 0.06 : 0), -lx * 0.5, "YXZ");
       g.scale.setScalar(0.17);
       g.visible = c.sink < 0.99;
       const cl = claws.current[i];
@@ -243,6 +249,7 @@ function Crabs() {
   });
 
   const poke = (i: number) => (e: ThreeEvent<MouseEvent>) => {
+    if (!shown(e.object)) return;
     e.stopPropagation();
     markInput();
     const c = crabs[i];
@@ -273,6 +280,8 @@ function Crabs() {
 }
 
 const crabApi: { hide: (c: Crab) => void } = { hide: () => {} };
+const crabTmp = new Vector3();
+const crabNormal = new Vector3();
 
 /* ---------------- frog ---------------- */
 
@@ -577,7 +586,7 @@ function Rabbit() {
         // nibble around a little
         const a = Math.random() * Math.PI * 2;
         const to = new Vector3(st.pos.x + Math.cos(a) * 0.35, 0, st.pos.z + Math.sin(a) * 0.35);
-        if (to.distanceTo(base) < 2) {
+        if (Math.hypot(to.x - base.x, to.z - base.z) < 2) {
           st.state = "hop";
           st.hops = 1;
           st.spot.copy(to);

@@ -16,7 +16,7 @@ import { mulberry32 } from "../../lib/math";
 import { height } from "../../lib/terrain";
 import { landCrumbs } from "../../lib/tools";
 import { emit, markInput, on, sfx, world, type Perch } from "../../lib/world";
-import { bubbles, popNear } from "../Bubbles";
+import { bubbles, popNear, type Bubble } from "../Bubbles";
 import { hoverable } from "../cursor";
 import { spawnSparkle } from "../effects/Particles";
 
@@ -39,7 +39,11 @@ type Bird = {
   peck: number;
   scale: number;
   awayFor: number;
+  prey: Bubble | null;
 };
+
+/** distance from a bird's origin down to its feet, in body units */
+const FOOT = 0.29;
 
 const tmp = new Vector3();
 
@@ -123,6 +127,7 @@ export function Birds() {
         peck: 0,
         scale: 0.15 + rnd() * 0.03,
         awayFor: 0.5 + rnd() * 4,
+        prey: null,
       };
     });
   }, [n]);
@@ -268,6 +273,9 @@ export function Birds() {
             b.awayFor = storm ? 30 : 10 + Math.random() * 18;
           } else if (b.goal === "bubble") {
             if (popNear(b.pos, 0.55)) sfx("chirp", b.pos, 0.45, 1.4);
+            // missed it: let someone else have a go
+            if (b.prey && !b.prey.dead) b.prey.hunted = false;
+            b.prey = null;
             const free = freePerches();
             if (free.length && !storm) {
               const p = free[Math.floor(Math.random() * free.length)];
@@ -296,11 +304,13 @@ export function Birds() {
             bubble.hunted = true;
             // aim a little ahead of where it's drifting
             const lead = bubble.pos.clone().addScaledVector(bubble.vel, 0.6 + bubble.pos.distanceTo(b.pos) / 4.2);
+            lead.y = Math.max(lead.y, height(lead.x, lead.z) + 0.2);
+            b.prey = bubble;
             birdsApi.flyTo(b, lead, "bubble");
           } else if (crumb && Math.random() < 0.8) {
             const c = crumb.pos;
             const to = new Vector3(c.x + (Math.random() - 0.5) * 0.3, 0, c.z + (Math.random() - 0.5) * 0.3);
-            to.y = height(to.x, to.z) + 0.02;
+            to.y = height(to.x, to.z) + FOOT * b.scale;
             birdsApi.flyTo(b, to, "crumb");
           } else if (asleep) {
             // sleeping: stay put, head tucked
@@ -337,10 +347,9 @@ export function Birds() {
           } else {
             const next = nearestCrumb(b.pos, 3);
             if (next) {
-              b.hop = 1;
-              const to = new Vector3(next.pos.x, height(next.pos.x, next.pos.z) + 0.02, next.pos.z);
-              b.heading = Math.atan2(to.x - b.pos.x, to.z - b.pos.z);
-              b.pos.lerp(to, 0.5);
+              // a short flutter over to the next crumb
+              const to = new Vector3(next.pos.x, height(next.pos.x, next.pos.z) + FOOT * b.scale, next.pos.z);
+              birdsApi.flyTo(b, to, "crumb");
             } else {
               const free = freePerches();
               if (free.length && !storm) {
@@ -373,6 +382,8 @@ export function Birds() {
   });
 
   const tapBird = (i: number) => (e: ThreeEvent<MouseEvent>) => {
+    // raycasts ignore `visible`, so a bird that has flown away would still catch taps
+    if (!groups.current[i]?.visible) return;
     e.stopPropagation();
     markInput();
     const b = birds[i];

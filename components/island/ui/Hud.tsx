@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as RPointerEvent } from "react";
 import { audio } from "../lib/audio";
+import { CREDITS } from "../lib/credits";
 import { SECRETS, forgetSecrets, found, onSecret, type SecretId } from "../lib/secrets";
 import { TOOLS, setTool, subscribeTool, toolState, type ToolKind } from "../lib/tools";
 import { clearWet } from "../lib/wetmap";
@@ -130,7 +131,9 @@ export default function Hud() {
   // keys: 1-7 tools, w weather, j journal, m mute
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]")) return;
+      if (e.key === "Escape") return setOpen(false);
       const t = TOOLS.find((x) => x.key === e.key);
       if (t) setTool(t.id);
       else if (e.key === "w") cycleWeather();
@@ -261,6 +264,10 @@ export default function Hud() {
           </button>
         </nav>
       </div>
+
+      <a className={styles.signature} href={CREDITS.url} target="_blank" rel="noopener noreferrer">
+        made by <b>{CREDITS.author}</b>
+      </a>
     </div>
   );
 }
@@ -288,12 +295,18 @@ function Journal({
   const [flow, setFlow] = useState(world.settings.timeFlow);
   const [wind, setWind] = useState(world.settings.windSense);
   const [waves, setWaves] = useState(world.settings.waves);
+  const closeBtn = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null;
+    closeBtn.current?.focus({ preventScroll: true });
+    return () => prev?.focus?.({ preventScroll: true });
+  }, []);
 
   return (
     <aside className={styles.journal} aria-label="Field notes">
       <div className={styles.jHead}>
         <h2>Field notes</h2>
-        <button className={styles.close} aria-label="Close" onClick={onClose}>
+        <button ref={closeBtn} className={styles.close} aria-label="Close (Esc)" onClick={onClose}>
           <Close size={22} />
         </button>
       </div>
@@ -393,15 +406,21 @@ function Journal({
           </button>
         </div>
         <p className={styles.help}>
-          Right-drag or use two fingers to look around.
+          {world.mobile ? "Use two fingers to look around and pinch to zoom." : "Drag to look around (right-drag with other tools), right-drag the hand to pan."}
           <br />
-          Scroll or pinch to zoom.
+          {world.mobile ? "Double-tap a spot to fly there." : "Scroll to zoom, double-click a spot to fly there."}
         </p>
         {secrets.length > 0 && (
           <button className={styles.linkBtn} onClick={() => forgetSecrets()}>
             forget the secrets I found
           </button>
         )}
+        <p className={styles.credit}>
+          Tiny Island, made by{" "}
+          <a href={CREDITS.url} target="_blank" rel="noopener noreferrer">
+            {CREDITS.author}
+          </a>
+        </p>
       </footer>
     </aside>
   );
@@ -469,6 +488,17 @@ function DayDial({ time }: { time: number }) {
     world.time = nt;
     setDrag(nt);
   };
+  const end = () => {
+    world.draggingTime = false;
+    setDrag(null);
+  };
+  // closing the notes mid-drag must not leave time (and the camera) frozen
+  useEffect(
+    () => () => {
+      world.draggingTime = false;
+    },
+    [],
+  );
 
   return (
     <svg
@@ -481,14 +511,9 @@ function DayDial({ time }: { time: number }) {
         set(e);
       }}
       onPointerMove={(e) => drag !== null && set(e)}
-      onPointerUp={() => {
-        world.draggingTime = false;
-        setDrag(null);
-      }}
-      onPointerCancel={() => {
-        world.draggingTime = false;
-        setDrag(null);
-      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onLostPointerCapture={end}
       role="slider"
       aria-label="Time of day"
       aria-valuemin={0}
@@ -497,8 +522,10 @@ function DayDial({ time }: { time: number }) {
       aria-valuetext={clock(t)}
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === "ArrowRight" || e.key === "ArrowUp") world.time = (world.time + 0.25) % 24;
-        if (e.key === "ArrowLeft" || e.key === "ArrowDown") world.time = (world.time + 23.75) % 24;
+        const step = e.key === "ArrowRight" || e.key === "ArrowUp" ? 0.25 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -0.25 : 0;
+        if (!step) return;
+        e.preventDefault();
+        world.time = (world.time + step + 24) % 24;
       }}
     >
       <defs>

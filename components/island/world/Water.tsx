@@ -7,7 +7,7 @@ import { atmo } from "../lib/atmosphere";
 import { LIGHTHOUSE } from "../lib/layout";
 import { GLSL_NOISE } from "../lib/patch";
 import { HEIGHT_TEX_SIZE, getHeightTexture } from "../lib/terrain";
-import { RIPPLE_COUNT, U, addRipple, emit, markInput, ripples, sfx, waveState, world } from "../lib/world";
+import { RIPPLE_COUNT, U, addRipple, emit, markInput, rippleClock, ripples, sfx, waveState, world } from "../lib/world";
 import { discover } from "../lib/secrets";
 import { registerGround } from "../lib/tools";
 import { setCursor } from "./cursor";
@@ -17,7 +17,7 @@ const BIO = new Color("#5ff2ff");
 
 const common = /* glsl */ `
 uniform float uTime; uniform float uWaveAmp; uniform sampler2D uHeight; uniform float uHSize;
-uniform vec4 uRipples[${RIPPLE_COUNT}];
+uniform vec4 uRipples[${RIPPLE_COUNT}]; uniform float uRippleLive;
 float terrainH(vec2 p){
   vec2 uv = p / uHSize + 0.5;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return -6.0;
@@ -28,21 +28,31 @@ float waves(vec2 p, float t){
        + sin(dot(p, vec2(-0.4,0.92))*0.8 + t*1.5)*0.07
        + sin(dot(p, vec2(0.95,-0.3))*1.4 + t*2.1)*0.04;
 }
-vec2 ripple(vec2 p){
-  float h = 0.0; float f = 0.0;
+// one pass over the rings: x = height, yz = analytic xz gradient, w = foam
+vec4 ripple(vec2 p){
+  vec4 acc = vec4(0.0);
+  if (uRippleLive < 0.5) return acc;
   for (int i = 0; i < ${RIPPLE_COUNT}; i++){
     vec4 r = uRipples[i];
     float age = uTime - r.z;
     if (age < 0.0 || age > 7.0 || r.w <= 0.0) continue;
-    float d = length(p - r.xy);
+    vec2 dp = p - r.xy;
+    float d = length(dp);
     float rad = age * 1.7 + 0.1;
     float x = d - rad;
     if (abs(x) > 3.0) continue;
-    float fade = exp(-age * 0.7) / (1.0 + d * 0.35);
-    h += r.w * fade * sin(x * 7.0) * exp(-x * x * 2.2);
-    f += r.w * exp(-age * 1.1) * exp(-x * x * 18.0) * smoothstep(0.0, 0.25, age);
+    float inv = 1.0 / (1.0 + d * 0.35);
+    float fade = exp(-age * 0.7) * inv;
+    float g = exp(-x * x * 2.2);
+    float s = sin(x * 7.0);
+    float S = s * g;
+    float dS = (7.0 * cos(x * 7.0) - 4.4 * x * s) * g;
+    float dh = r.w * fade * (dS - 0.35 * inv * S);
+    acc.x += r.w * fade * S;
+    acc.yz += dh * dp / max(d, 1e-4);
+    acc.w += r.w * exp(-age * 1.1) * exp(-x * x * 18.0) * smoothstep(0.0, 0.25, age);
   }
-  return vec2(h, f);
+  return acc;
 }
 `;
 
@@ -72,25 +82,20 @@ uniform float uDaylight; uniform float uStorm; uniform float uRain; uniform floa
 uniform vec2 uLH; uniform float uBeam; uniform float uBeamAngle; uniform float uCloud;
 varying vec3 vW; varying float vWave;
 
-float hsum(vec2 p, float amp, bool near){
-  float h = waves(p, uTime) * amp;
-  if (near) h += ripple(p).x * 0.09;
-  return h;
-}
-
 void main(){
   vec2 p = vW.xz;
   float camDist = length(cameraPosition - vW);
   float depth = max(-terrainH(p), 0.0);
   float amp = uWaveAmp * (0.3 + 0.7 * clamp(depth / 2.0, 0.0, 1.0));
   bool near = length(p) < 40.0;
+  vec4 rp4 = near ? ripple(p) : vec4(0.0);
 
-  // normal from wave gradient
+  // normal from the swell (finite differences) plus the ripples' exact slope
   float e = 0.12;
-  float h0 = hsum(p, amp, near);
-  float hx = hsum(p + vec2(e, 0.0), amp, near);
-  float hz = hsum(p + vec2(0.0, e), amp, near);
-  vec3 N = normalize(vec3((h0 - hx) * 0.55, e, (h0 - hz) * 0.55));
+  float h0 = waves(p, uTime) * amp;
+  float hx = waves(p + vec2(e, 0.0), uTime) * amp;
+  float hz = waves(p + vec2(0.0, e), uTime) * amp;
+  vec3 N = normalize(vec3((h0 - hx - rp4.y * 0.09 * e) * 0.55, e, (h0 - hz - rp4.z * 0.09 * e) * 0.55));
   // fine detail: two drifting noise layers (breaks up the regular swell)
   float dt = uTime;
   vec2 q1 = p * 0.9 + vec2(dt * 0.11, dt * 0.07);
@@ -135,8 +140,7 @@ void main(){
   float n2 = tiNoise(p * 5.0 - uTime * 0.4);
   float shore = smoothstep(0.22, 0.02, depth + (n - 0.5) * 0.14);
   float bands = smoothstep(0.55, 0.95, sin(depth * 20.0 - uTime * 1.6 + n * 5.0)) * smoothstep(0.75, 0.08, depth) * (0.55 + n2 * 0.6);
-  vec2 rp = near ? ripple(p) : vec2(0.0);
-  float rfoam = clamp(rp.y, 0.0, 1.0) * (0.55 + 0.45 * n2);
+  float rfoam = clamp(rp4.w, 0.0, 1.0) * (0.55 + 0.45 * n2);
   float crest = smoothstep(0.1, 0.22, vWave) * uStorm * smoothstep(0.35, 0.75, n2);
   // rain rings
   float rainRing = 0.0;
@@ -213,6 +217,7 @@ export function Water() {
           uHeight: { value: getHeightTexture() },
           uHSize: { value: HEIGHT_TEX_SIZE },
           uRipples: { value: ripples },
+          uRippleLive: { value: 0 },
           uDeep: { value: new Color() },
           uShallow: { value: new Color() },
           uZenith: { value: new Color() },
@@ -241,6 +246,7 @@ export function Water() {
   useFrame(() => {
     const u = mat.uniforms;
     u.uWaveAmp.value = waveState.amp;
+    u.uRippleLive.value = world.elapsed - rippleClock.last < 7.2 ? 1 : 0;
     u.uDeep.value.copy(atmo.waterDeep);
     u.uShallow.value.copy(atmo.waterShallow);
     u.uZenith.value.copy(atmo.zenith);

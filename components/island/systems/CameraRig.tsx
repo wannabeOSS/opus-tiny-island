@@ -16,6 +16,7 @@ const HOME = { az: 0.69, el: 0.34, dist: 26.5 };
 const INTRO = { az: 1.45, el: 0.62, dist: 52 };
 /** the look-at point may wander this far from the island centre */
 const TARGET_RADIUS = 10.5;
+const REDUCED_MOTION = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const tmp = new Vector3();
 const dir = new Vector3();
@@ -47,15 +48,21 @@ export function CameraRig() {
 
   const portrait = size.width < size.height;
   const homeDist = HOME.dist * (portrait ? 1.5 : 1);
+  // read by event handlers that outlive a rotation or resize
+  const homeDistRef = useRef(homeDist);
+  useEffect(() => {
+    homeDistRef.current = homeDist;
+  }, [homeDist]);
 
   useEffect(() => {
+    if (REDUCED_MOTION) state.current.intro = 1;
     orbitPos(camera.position, HOME_TARGET, INTRO.az, INTRO.el, INTRO.dist);
     camera.lookAt(HOME_TARGET);
     const goHome = () => {
       const s = state.current;
       s.introDone = true;
       s.focusTarget = HOME_TARGET.clone();
-      s.focusDist = homeDist;
+      s.focusDist = homeDistRef.current;
     };
     const off1 = on("focus", ({ pos }) => {
       if (!pos) return goHome();
@@ -68,10 +75,10 @@ export function CameraRig() {
 
     // double-click / double-tap glides the camera toward that spot
     const el = gl.domElement;
-    const dbl = (e: MouseEvent) => {
+    const glideTo = (clientX: number, clientY: number) => {
       if (toolState.tool !== "hand" || world.holding) return;
       const rect = el.getBoundingClientRect();
-      ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
       ray.setFromCamera(ndc, camera);
       hits.length = 0;
       ray.intersectObjects(groundTargets, false, hits);
@@ -81,18 +88,43 @@ export function CameraRig() {
       const s = state.current;
       s.introDone = true;
       const p = h.point.clone();
-      if (Math.hypot(p.x, p.z) > TARGET_RADIUS) p.setLength(TARGET_RADIUS);
+      const r = Math.hypot(p.x, p.z);
+      if (r > TARGET_RADIUS) {
+        p.x *= TARGET_RADIUS / r;
+        p.z *= TARGET_RADIUS / r;
+      }
       s.focusTarget = p.setY(Math.max(floorAt(p.x, p.z, world.elapsed), 0) + 0.45);
       const cur = camera.position.distanceTo(controls.current?.target ?? HOME_TARGET);
       s.focusDist = clamp(cur * 0.6, 7, 14);
     };
+    const dbl = (e: MouseEvent) => glideTo(e.clientX, e.clientY);
+    // iOS Safari never sends dblclick for touch, so spot double-taps ourselves
+    const tap = { t: 0, x: 0, y: 0, downT: 0 };
+    const down = (e: PointerEvent) => {
+      if (e.pointerType === "touch" && e.isPrimary) tap.downT = e.timeStamp;
+    };
+    const up = (e: PointerEvent) => {
+      if (e.pointerType !== "touch" || !e.isPrimary || e.timeStamp - tap.downT > 250) return;
+      const quick = e.timeStamp - tap.t < 320 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 30;
+      if (quick) {
+        tap.t = 0;
+        glideTo(e.clientX, e.clientY);
+      } else {
+        tap.t = e.timeStamp;
+        tap.x = e.clientX;
+        tap.y = e.clientY;
+      }
+    };
     el.addEventListener("dblclick", dbl);
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
     return () => {
       off1();
       off2();
       el.removeEventListener("dblclick", dbl);
+      el.removeEventListener("pointerdown", down);
+      el.removeEventListener("pointerup", up);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, gl]);
 
   useFrame((_, rawDt) => {
@@ -155,7 +187,7 @@ export function CameraRig() {
 
     // closer in, the camera may dip lower for a ground-level view
     c.maxPolarAngle = 1.32 + 0.16 * (1 - smoothstep(8, 26, dist));
-    c.autoRotate = s.introDone && idle > 24 && !world.holding && !world.draggingTime;
+    c.autoRotate = !REDUCED_MOTION && s.introDone && idle > 24 && !world.holding && !world.draggingTime;
     c.autoRotateSpeed = 0.16 * smoothstep(24, 32, idle);
     c.enabled = !world.holding && !world.draggingTime;
     // with a tool in hand, the left button / one finger belongs to the tool

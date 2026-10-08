@@ -46,8 +46,9 @@ export const found = new Set<SecretId>();
 const KEY = "tiny-island-secrets";
 if (typeof window !== "undefined") {
   try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? "[]") as SecretId[];
-    saved.forEach((s) => found.add(s));
+    const saved: unknown = JSON.parse(localStorage.getItem(KEY) ?? "[]");
+    // ignore ids from older versions so the count never reads "17 of 16"
+    if (Array.isArray(saved)) for (const s of saved) if (SECRETS.some((x) => x.id === s)) found.add(s as SecretId);
   } catch {
     // ignore
   }

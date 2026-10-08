@@ -28,7 +28,7 @@ import { merge, prep } from "../lib/geo";
 import { clamp } from "../lib/math";
 import { discover } from "../lib/secrets";
 import { height, inPond, POND_LEVEL } from "../lib/terrain";
-import { groundTargets, landCrumbs, setTool, subscribeTool, toolState, type Surface } from "../lib/tools";
+import { groundTargets, landCrumbs, setTool, subscribeTool, toolState, type Surface, type ToolKind } from "../lib/tools";
 import { addWet, wetAt } from "../lib/wetmap";
 import { addPondRipple, addRipple, emit, markInput, on, sfx, U, world } from "../lib/world";
 import { blowBubble } from "../world/Bubbles";
@@ -52,6 +52,7 @@ const MOON_COL = new Color("#b9d2ff");
 const LEAF_COLS = ["#9cc56a", "#c9d77a", "#e9b85b", "#f3d2df"].map((c) => new Color(c));
 const MAX_CRUMBS = 80;
 const RING_POOL = 6;
+const RING_SCALE: Record<ToolKind, number> = { pinwheel: 0.7, cloud: 0.5, mirror: 0.55, bubbles: 0.3, seedbomb: 0.28, conch: 0.4, hand: 0.25 };
 /** seconds of steady rain before a pocket cloud crackles */
 const CLOUD_TEMPER = 7;
 
@@ -148,6 +149,9 @@ export function Tools() {
     lastBomb: -10,
     lastConch: -10,
     answerUntil: -10,
+    px: 0,
+    py: 0,
+    needPick: false,
   });
   const rings = useRef<Ring[]>([]);
   const answers = useRef(new Set<string>());
@@ -261,13 +265,12 @@ export function Tools() {
       if (toolState.active) tap(surf);
     };
     const move = (e: PointerEvent) => {
-      if (toolState.tool === "hand") {
-        const rect = el.getBoundingClientRect();
-        toolState.ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-        return;
-      }
-      pick(e.clientX, e.clientY);
-      if (!s.down) return;
+      if (!e.isPrimary) return;
+      // high-rate mice fire many moves per frame; raycast once per frame instead
+      s.px = e.clientX;
+      s.py = e.clientY;
+      s.needPick = true;
+      if (toolState.tool === "hand" || !s.down) return;
       const now = performance.now();
       const dt = Math.max(1, now - s.lastT) / 1000;
       const vx = (e.clientX - s.lastXY.x) / dt;
@@ -281,21 +284,32 @@ export function Tools() {
       s.down = false;
       toolState.active = false;
     };
+    const leave = () => {
+      s.needPick = false;
+      toolState.surface = "none";
+      toolState.ndc.set(0, -2);
+      world.pointerOverWorld = false;
+    };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") setTool("hand");
     };
     const ctx = (e: MouseEvent) => e.preventDefault();
     el.addEventListener("pointerdown", down);
     el.addEventListener("pointermove", move);
+    el.addEventListener("pointerleave", leave);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
+    // switching apps mid-hold never delivers a pointerup
+    window.addEventListener("blur", up);
     window.addEventListener("keydown", key);
     el.addEventListener("contextmenu", ctx);
     return () => {
       el.removeEventListener("pointerdown", down);
       el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerleave", leave);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
+      window.removeEventListener("blur", up);
       window.removeEventListener("keydown", key);
       el.removeEventListener("contextmenu", ctx);
     };
@@ -375,6 +389,13 @@ export function Tools() {
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 1 / 20);
     const s = st.current;
+    if (s.needPick) {
+      s.needPick = false;
+      if (toolState.tool === "hand") {
+        const rect = gl.domElement.getBoundingClientRect();
+        toolState.ndc.set(((s.px - rect.left) / rect.width) * 2 - 1, -((s.py - rect.top) / rect.height) * 2 + 1);
+      } else pick(s.px, s.py);
+    }
     const p = toolState.point;
     const surf = toolState.surface;
     const tool = toolState.tool;
@@ -388,7 +409,7 @@ export function Tools() {
       r.visible = tool !== "hand" && surf !== "none" && world.pointerOverWorld && !world.mobile;
       if (r.visible) {
         r.position.set(p.x, surfaceY(p, surf) + 0.03, p.z);
-        const sc = { pinwheel: 0.7, cloud: 0.5, mirror: 0.55, bubbles: 0.3, seedbomb: 0.28, conch: 0.4, hand: 0.25 }[tool];
+        const sc = RING_SCALE[tool];
         r.scale.setScalar(sc * (act ? 0.85 + Math.sin(t * 12) * 0.05 : 1));
         (r.material as MeshBasicMaterial).opacity = act ? 0.55 : 0.32;
       }
@@ -437,7 +458,8 @@ export function Tools() {
     if (bm && gw && lt) {
       const on = s.beam > 0.01;
       bm.visible = gw.visible = on;
-      lt.visible = on;
+      // the light stays in the scene at zero intensity: toggling visibility changes the light count and recompiles every lit shader
+      if (!on) lt.intensity = 0;
       if (on) {
         const y = surfaceY(p, surf);
         const src = world.sunDir.y > 0.05 ? world.sunDir : world.moonDir.y > 0.05 ? world.moonDir : tmp2.set(0.3, 1, 0.2);
@@ -672,7 +694,7 @@ export function Tools() {
       </group>
       <mesh ref={beam} geometry={beamGeo} material={beamMat} visible={false} raycast={() => null} renderOrder={7} frustumCulled={false} />
       <mesh ref={glow} geometry={glowGeo} material={glowMat} visible={false} raycast={() => null} renderOrder={7} />
-      <pointLight ref={light} visible={false} distance={3.5} decay={2} intensity={0} />
+      <pointLight ref={light} distance={3.5} decay={2} intensity={0} />
       {ringMats.map((m, i) => (
         <mesh
           key={i}

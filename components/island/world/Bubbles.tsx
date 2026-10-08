@@ -16,7 +16,7 @@ export const bubbles: Bubble[] = [];
 const FILM = new Color("#cfe8ff");
 
 export function blowBubble(pos: Vector3, vel: Vector3, r = 0.08 + Math.random() * 0.1) {
-  if (bubbles.length >= MAX) popBubble(bubbles[0], true);
+  if (bubbles.length >= MAX) popBubble(bubbles.shift()!, true);
   bubbles.push({ pos: pos.clone(), vel: vel.clone(), r, age: 0, life: 7 + Math.random() * 7, seed: Math.random(), dead: false, hunted: false });
 }
 
@@ -159,7 +159,7 @@ export function Bubbles() {
       m.setMatrixAt(i, dummy.matrix);
       seeds.setX(i, b.seed);
     });
-    m.count = bubbles.length;
+    m.count = Math.min(bubbles.length, MAX);
     m.instanceMatrix.needsUpdate = true;
     seeds.needsUpdate = true;
   });

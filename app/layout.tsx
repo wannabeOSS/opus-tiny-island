@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Shantell_Sans } from "next/font/google";
+import { CREDITS } from "@/components/island/lib/credits";
 import "./globals.css";
 
 const hand = Shantell_Sans({
@@ -8,9 +9,16 @@ const hand = Shantell_Sans({
   weight: ["400", "500"],
 });
 
+const description = "A small living island. Poke it and see what happens.";
+
 export const metadata: Metadata = {
   title: "Tiny Island",
-  description: "A small living island. Poke it and see what happens.",
+  description,
+  applicationName: "Tiny Island",
+  authors: [{ name: CREDITS.author, url: CREDITS.url }],
+  creator: CREDITS.author,
+  openGraph: { title: "Tiny Island", description, type: "website" },
+  twitter: { card: "summary", title: "Tiny Island", description },
 };
 
 export const viewport: Viewport = {
@@ -18,6 +26,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  viewportFit: "cover",
   themeColor: "#f2dcc2",
 };
 

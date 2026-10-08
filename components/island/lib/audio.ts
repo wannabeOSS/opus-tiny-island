@@ -25,6 +25,8 @@ class Engine {
   private lastPlay = new Map<string, number>();
   private cricketT = 0;
 
+  private suspendT: ReturnType<typeof setTimeout> | undefined;
+
   constructor() {
     if (typeof window !== "undefined") {
       try {
@@ -32,13 +34,29 @@ class Engine {
       } catch {
         // ignore
       }
+      // loops would otherwise freeze at their last level and drone on in a background tab
+      document.addEventListener("visibilitychange", () => this.sync());
+    }
+  }
+
+  /** run the context only while it can be heard; a suspended context costs no CPU */
+  private sync() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    clearTimeout(this.suspendT);
+    if (!document.hidden && !this.muted) {
+      // also covers iOS's "interrupted" state after a call or Siri
+      if (ctx.state !== "running") void ctx.resume().catch(() => undefined);
+    } else {
+      // let a mute fade out before stopping the clock
+      this.suspendT = setTimeout(() => void ctx.suspend().catch(() => undefined), this.muted && !document.hidden ? 400 : 0);
     }
   }
 
   /** must be called from a user gesture */
   start() {
     if (this.ctx) {
-      if (this.ctx.state === "suspended") void this.ctx.resume();
+      this.sync();
       return;
     }
     const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -76,6 +94,7 @@ class Engine {
     this.makeLoop("rain", this.white, "highpass", 1400, 0.4);
     this.makeLoop("pour", this.white, "bandpass", 2600, 1.2);
     this.makeLoop("fire", this.brown, "bandpass", 900, 2);
+    if (this.muted) this.sync();
   }
 
   private makeLoop(name: LoopName, buf: AudioBuffer, type: BiquadFilterType, freq: number, q: number) {
@@ -102,7 +121,10 @@ class Engine {
     } catch {
       // ignore
     }
-    if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.ctx.currentTime, 0.2);
+    if (this.ctx) {
+      this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.ctx.currentTime, 0.2);
+      this.sync();
+    }
     this.listeners.forEach((l) => l());
   }
 

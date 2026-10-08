@@ -37,6 +37,7 @@ function fluke() {
 }
 
 const DUR = 7.5;
+const whaleTmp = new Vector3();
 
 export function Whale() {
   const { camera } = useThree();
@@ -78,7 +79,7 @@ export function Whale() {
     st.t += dt;
     o.visible = true;
     const u = Math.min(1, Math.max(0, (st.t - 0.6) / 5.2));
-    const p = st.start.clone().addScaledVector(st.dir, u * 7);
+    const p = whaleTmp.copy(st.start).addScaledVector(st.dir, u * 7);
     const y = -1.6 + Math.sin(u * Math.PI) * 1.75;
     o.position.set(p.x, y, p.z);
     o.rotation.set(-Math.cos(u * Math.PI) * 0.45, Math.atan2(st.dir.x, st.dir.z), 0, "YXZ");

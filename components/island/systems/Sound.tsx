@@ -9,6 +9,7 @@ import { on, world } from "../lib/world";
 
 const v = new Vector3();
 const fwd = new Vector3();
+const amb: Parameters<typeof audio.ambience>[0] = { ocean: 0, wind: 0, rain: 0, night: 0, storm: 0, dt: 0, birds: 0, fire: 0 };
 
 /** Bridges world events to the synth and keeps the ambience in step with the weather. */
 export function Sound() {
@@ -16,20 +17,21 @@ export function Sound() {
 
   useEffect(() => {
     const start = () => audio.start();
-    window.addEventListener("pointerdown", start);
-    window.addEventListener("keydown", start);
+    // mobile browsers only unlock audio on touchend / pointerup / click, not on pointerdown
+    const gestures = ["pointerdown", "pointerup", "touchend", "click", "keydown"] as const;
+    for (const g of gestures) window.addEventListener(g, start);
     audio.spatial = (p) => {
-      v.copy(p).project(camera);
       const dist = camera.position.distanceTo(p);
       camera.getWorldDirection(fwd);
       const behind = fwd.dot(v.copy(p).sub(camera.position)) < 0 ? 0.5 : 1;
-      v.copy(p).project(camera);
-      return { pan: clamp(v.x * 0.8, -1, 1), gain: clamp(22 / (dist + 8)) * behind };
+      // pan from camera space; projected x flips sign for sounds behind the camera
+      v.copy(p).applyMatrix4(camera.matrixWorldInverse);
+      const len = v.length();
+      return { pan: clamp(len > 1e-4 ? (v.x / len) * 1.2 : 0, -1, 1), gain: clamp(22 / (dist + 8)) * behind };
     };
     const off = on("sfx", ({ name, pos, strength, pitch }) => audio.playAt(name, pos, strength, pitch));
     return () => {
-      window.removeEventListener("pointerdown", start);
-      window.removeEventListener("keydown", start);
+      for (const g of gestures) window.removeEventListener(g, start);
       off();
     };
   }, [camera]);
@@ -37,17 +39,18 @@ export function Sound() {
   useFrame((_, dt) => {
     const w = world.w;
     const dist = camera.position.length();
-    const shower = world.showers.reduce((a, s) => Math.max(a, s.i), 0);
-    audio.ambience({
-      ocean: clamp(1.2 - dist / 90, 0.35, 1),
-      wind: world.windStrength,
-      rain: Math.max(w.rain, shower * 0.35),
-      night: world.night,
-      storm: w.storm,
-      dt: Math.min(dt, 0.1),
-      birds: world.daylight * (1 - w.storm) * (1 - w.snow * 0.7),
-      fire: world.night * clamp(1 - camera.position.distanceTo(v.set(-0.5, 1, 0.7)) / 18),
-    });
+    let shower = 0;
+    for (const s of world.showers) shower = Math.max(shower, s.i);
+    const a = amb;
+    a.ocean = clamp(1.2 - dist / 90, 0.35, 1);
+    a.wind = world.windStrength;
+    a.rain = Math.max(w.rain, shower * 0.35);
+    a.night = world.night;
+    a.storm = w.storm;
+    a.dt = Math.min(dt, 0.1);
+    a.birds = world.daylight * (1 - w.storm) * (1 - w.snow * 0.7);
+    a.fire = world.night * clamp(1 - camera.position.distanceTo(v.set(-0.5, 1, 0.7)) / 18);
+    audio.ambience(a);
   });
 
   return null;

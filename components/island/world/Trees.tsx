@@ -16,7 +16,7 @@ import {
   BoxGeometry,
   CylinderGeometry,
 } from "three";
-import { addCollider } from "../lib/colliders";
+import { addCollider, ringHull } from "../lib/colliders";
 import { blob, merge, place, prep, sphericalNormals, trunk } from "../lib/geo";
 import { OLD_TREE, PALMS, PINES, ROUND_TREES } from "../lib/layout";
 import { mulberry32, noise2 } from "../lib/math";
@@ -64,17 +64,20 @@ function useTree(opts: {
   leafColor: string;
   fruits: FruitSlot[];
   stiffness?: number;
+  /** a leaning trunk: the crown's horizontal offset at canopyY (the trunk follows lean·t²) */
+  lean?: [number, number];
 }) {
   const group = useRef<Group>(null);
   const s = useRef({ ax: 0, az: 0, vx: 0, vz: 0, lastShake: -10 });
   const y0 = useMemo(() => height(opts.x, opts.z), [opts.x, opts.z]);
+  const [lx, lz] = opts.lean ?? [0, 0];
 
   const shake = (strength: number, from?: Vector3) => {
     const st = s.current;
-    const a = from ? Math.atan2(opts.z - from.z, opts.x - from.x) : Math.random() * Math.PI * 2;
+    const a = from ? Math.atan2(opts.z + lz - from.z, opts.x + lx - from.x) : Math.random() * Math.PI * 2;
     st.vx += Math.cos(a) * 2.2 * strength;
     st.vz += Math.sin(a) * 2.2 * strength;
-    const top = new Vector3(opts.x, y0 + opts.canopyY, opts.z);
+    const top = new Vector3(opts.x + lx, y0 + opts.canopyY, opts.z + lz);
     emit("leaves", { pos: top, n: Math.round(6 + strength * 10), color: opts.leafColor, spread: opts.canopyR });
     emit("disturb", { pos: top, radius: 3.5 });
     emit("shake", { pos: top, id: opts.id });
@@ -94,34 +97,62 @@ function useTree(opts: {
   };
 
   useEffect(() => {
-    const off1 = addCollider({
-      id: opts.id,
-      x: opts.x,
-      z: opts.z,
-      r: opts.trunkR + 0.06,
-      bottom: y0 - 0.2,
-      top: y0 + opts.top,
-      surface: "wood",
-    });
-    const off2 = addCollider({
-      id: opts.id + "-canopy",
-      x: opts.x,
-      z: opts.z,
-      r: opts.canopyR * 0.9,
-      bottom: y0 + opts.canopyY - opts.canopyR * 0.6,
-      top: y0 + opts.canopyY + opts.canopyR * 0.6,
-      surface: "leaf",
-      onHit: (p, speed) => shake(Math.min(1.2, speed / 8), p),
-    });
+    const offs: (() => void)[] = [];
+    const r = opts.trunkR + 0.06;
+    if (opts.lean) {
+      // two straight-ish hull segments along the curved trunk
+      const ring = (t: number): [number, number, number, number] => {
+        const k = ((opts.top * t) / opts.canopyY) ** 2;
+        return [r * (1 - 0.4 * t), y0 + opts.top * t, lx * k, lz * k];
+      };
+      for (const [t0, t1, part] of [[0, 0.5, ""], [0.5, 1, "-upper"]] as const) {
+        const [ra, ya, ax, az] = ring(t0);
+        const [rb, yb, bx, bz] = ring(t1);
+        const cx = (ax + bx) / 2;
+        const cz = (az + bz) / 2;
+        const bottom = t0 === 0 ? y0 - 0.2 : ya;
+        offs.push(
+          addCollider({
+            id: opts.id + part,
+            x: opts.x + cx,
+            z: opts.z + cz,
+            r: r + Math.hypot(bx - ax, bz - az) / 2,
+            bottom,
+            top: yb,
+            surface: "wood",
+            hull: ringHull(
+              [
+                [ra, bottom, ax - cx, az - cz],
+                [rb, yb, bx - cx, bz - cz],
+              ],
+              8,
+            ),
+          }),
+        );
+      }
+    } else {
+      offs.push(addCollider({ id: opts.id, x: opts.x, z: opts.z, r, bottom: y0 - 0.2, top: y0 + opts.top, surface: "wood" }));
+    }
+    offs.push(
+      addCollider({
+        id: opts.id + "-canopy",
+        x: opts.x + lx,
+        z: opts.z + lz,
+        r: opts.canopyR * 0.9,
+        bottom: y0 + opts.canopyY - opts.canopyR * 0.6,
+        top: y0 + opts.canopyY + opts.canopyR * 0.6,
+        surface: "leaf",
+        onHit: (p, speed) => shake(Math.min(1.2, speed / 8), p),
+      }),
+    );
     const perch = {
       id: opts.id,
-      pos: new Vector3(opts.x + 0.1, y0 + opts.canopyY + opts.canopyR * 0.75, opts.z + 0.05),
+      pos: new Vector3(opts.x + lx + 0.1, y0 + opts.canopyY + opts.canopyR * 0.75, opts.z + lz + 0.05),
       taken: false,
     };
     world.perches.push(perch);
     return () => {
-      off1();
-      off2();
+      offs.forEach((o) => o());
       world.perches = world.perches.filter((p) => p !== perch);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -407,9 +438,10 @@ function Palm({ a, r, lean, s, seed, id }: { a: number; r: number; lean: number;
     x,
     z,
     trunkR: 0.15 * s,
-    top: g.h * s * 0.5,
+    top: g.h * s * 0.92,
     canopyY: g.crown.y * s,
     canopyR: 1.1 * s,
+    lean: [g.crown.x * s, g.crown.z * s],
     drop: "coconut",
     leafColor: "#7fa94a",
     fruits,

@@ -81,7 +81,8 @@ export function MysteryTree() {
   }, []);
   return (
     <>
-      {pos && <Tree pos={pos} />}
+      {/* a dark stand-in keeps the scene's light count fixed, so planting doesn't recompile every shader */}
+      {pos ? <Tree pos={pos} /> : <pointLight intensity={0} distance={5} decay={1.6} />}
       <Moonflower />
     </>
   );
@@ -218,6 +219,7 @@ function Tree({ pos }: { pos: Vector3 }) {
   });
 
   const touch = (e: ThreeEvent<MouseEvent>) => {
+    if (e.delta > 6) return;
     e.stopPropagation();
     markInput();
     const st = s.current;
@@ -230,6 +232,7 @@ function Tree({ pos }: { pos: Vector3 }) {
   };
 
   const ring = (i: number) => (e: ThreeEvent<MouseEvent>) => {
+    if (e.delta > 6) return;
     const st = s.current;
     if (st.g < 0.9 || st.finale >= 0) return touch(e);
     e.stopPropagation();
@@ -340,6 +343,7 @@ export function Moonflower() {
     <group
       position={MOON_SPOT}
       onClick={(e) => {
+        if (e.delta > 6) return;
         e.stopPropagation();
         markInput();
         const st = s.current;

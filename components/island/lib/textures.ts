@@ -74,7 +74,9 @@ export function shingleTexture(base: string, seed = 2) {
         const l = (rnd() - 0.5) * 0.18;
         ctx.fillStyle = l > 0 ? `rgba(255,255,255,${l})` : `rgba(0,0,0,${-l})`;
         ctx.beginPath();
-        ctx.roundRect(x + off + 1, r * rh, 30, rh - 1, [0, 0, 6, 6]);
+        // roundRect is missing before Safari 16
+        if (ctx.roundRect) ctx.roundRect(x + off + 1, r * rh, 30, rh - 1, [0, 0, 6, 6]);
+        else ctx.rect(x + off + 1, r * rh, 30, rh - 1);
         ctx.fill();
         ctx.fillStyle = "rgba(0,0,0,0.22)";
         ctx.fillRect(x + off + 1, r * rh + rh - 3, 30, 3);

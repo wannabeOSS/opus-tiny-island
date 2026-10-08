@@ -273,12 +273,16 @@ function ShootingStars() {
    ===================================================================== */
 
 type CloudState = {
-  angle: number;
-  radius: number;
-  y: number;
+  x: number;
+  z: number;
+  /** extra height above the sky dome at this spot */
+  lift: number;
+  yaw: number;
   speed: number;
   scale: number;
   threshold: number;
+  /** 0..1 fade after (re)spawning on the upwind edge */
+  enter: number;
   geo: BufferGeometry;
   mat: ShaderMaterial;
   mesh: Group | null;
@@ -360,41 +364,79 @@ function makeCloudMaterial() {
 
 export const cloudStates: CloudState[] = [];
 
+/** clouds live inside this disc, drifting downwind and re-entering upwind */
+const SKY_R = 58;
+const driftDir = new Vector2(0.9, 0.4).normalize();
+/** a fresh sky every visit */
+const SKY_SEED = (Math.random() * 2 ** 31) | 0;
+
+/** high overhead, sinking toward the horizon so distant clouds stay in frame from any angle */
+function cloudBase(r: number) {
+  return 11 - 6 * smoothstep(10, 40, r);
+}
+
+function rollCloud(c: CloudState, rnd: () => number) {
+  c.lift = rnd() * 2.5;
+  c.yaw = rnd() * Math.PI * 2;
+  c.speed = 0.6 + rnd() * 0.8;
+  c.scale = 0.75 + rnd() * 0.95;
+}
+
+/** put a cloud back on the upwind rim, somewhere random along it */
+function respawnUpwind(c: CloudState) {
+  const side = (Math.random() * 2 - 1) * SKY_R * 0.85;
+  const back = -Math.sqrt(SKY_R * SKY_R - side * side) * 0.97;
+  c.x = driftDir.x * back - driftDir.y * side;
+  c.z = driftDir.y * back + driftDir.x * side;
+  c.enter = 0;
+  rollCloud(c, Math.random);
+}
+
 function Clouds() {
+  const { camera } = useThree();
   const count = world.mobile ? 9 : 14;
   const clouds = useMemo<CloudState[]>(() => {
-    const rnd = mulberry32(2024);
+    const rnd = mulberry32(SKY_SEED);
+    // how many puffs hang around on a clear day
+    const fair = 4 + Math.floor(rnd() * 3);
     const out: CloudState[] = [];
-    // the fair-weather clouds sit low behind the island, framed by the default view
-    const hero = [
-      { a: 3.42, r: 30, y: 9.5 },
-      { a: 3.8, r: 40, y: 12 },
-      { a: 4.3, r: 27, y: 9 },
-      { a: 4.6, r: 36, y: 11 },
-    ];
     for (let i = 0; i < count; i++) {
-      const h = hero[i];
-      const mat = makeCloudMaterial();
-      out.push({
-        angle: h ? h.a : (i / count) * Math.PI * 2 + rnd() * 0.4,
-        radius: h ? h.r : 15 + rnd() * 26,
-        y: h ? h.y : 11 + rnd() * 6,
-        speed: 0.6 + rnd() * 0.8,
-        scale: 0.8 + rnd() * 0.9,
-        // a few clouds exist even on a clear day; the rest arrive with weather
-        threshold: i < 4 ? 0.0 : 0.2 + (i / count) * 0.6,
-        geo: cloudGeo(100 + i * 13),
-        mat,
+      // scattered over the whole disc, keeping the patch right above the island clear
+      const a = rnd() * Math.PI * 2;
+      const r = 14 + Math.sqrt(rnd()) * (SKY_R * 0.8 - 14);
+      const c: CloudState = {
+        x: Math.cos(a) * r,
+        z: Math.sin(a) * r,
+        lift: 0,
+        yaw: 0,
+        speed: 1,
+        scale: 1,
+        threshold: i < fair ? -0.2 + rnd() * 0.2 : 0.25 + ((i - fair) / Math.max(1, count - fair)) * 0.55,
+        enter: 1,
+        geo: cloudGeo(100 + Math.floor(rnd() * 5000)),
+        mat: makeCloudMaterial(),
         mesh: null,
         squish: 0,
         rain: 0,
         pokes: [],
-        vis: 0,
+        vis: i < fair ? 1 : 0,
         pos: new Vector3(),
-      });
+      };
+      rollCloud(c, rnd);
+      out.push(c);
     }
     return out;
   }, [count]);
+
+  useEffect(
+    () => () => {
+      for (const c of clouds) {
+        c.geo.dispose();
+        c.mat.dispose();
+      }
+    },
+    [clouds],
+  );
 
   useEffect(() => {
     cloudStates.length = 0;
@@ -421,8 +463,16 @@ function Clouds() {
     const dt = Math.min(rawDt, 1 / 20);
     const w = world.w;
     const t = world.elapsed;
-    const windDir = Math.atan2(world.wind.y, world.wind.x);
     world.showers.length = 0;
+
+    // the whole sky leans slowly into the wind; cursor gusts barely register up here
+    if (world.windStrength > 0.05) {
+      const k = 1 - Math.exp(-dt * 0.15);
+      driftDir.x += (world.wind.x / world.windStrength - driftDir.x) * k;
+      driftDir.y += (world.wind.y / world.windStrength - driftDir.y) * k;
+      driftDir.normalize();
+    }
+    const drift = 0.22 + Math.min(world.windStrength, 2) * 0.45;
 
     // lit side: cream warmed by the sun; shaded side borrows the sky's colour
     lit.set("#fff8ef").lerp(atmo.sunColor, 0.3 * world.daylight);
@@ -435,30 +485,40 @@ function Clouds() {
     rim.lerp(moonRim, world.night);
 
     for (const c of clouds) {
-      // drift around the island, nudged by the wind
-      c.angle += dt * 0.004 * c.speed * (1 + world.windStrength * 3) * (Math.sin(windDir - c.angle) > 0 ? 1 : 0.6);
+      // a raining cloud lingers so you can stand under it
+      const pace = drift * c.speed * (c.rain > 0.02 ? 0.25 : 1);
+      c.x += driftDir.x * pace * dt;
+      c.z += driftDir.y * pace * dt;
+      const along = c.x * driftDir.x + c.z * driftDir.y;
+      if (c.x * c.x + c.z * c.z > SKY_R * SKY_R && along > 0) respawnUpwind(c);
+      c.enter = Math.min(1, c.enter + dt / 8);
+
       const stormDrop = w.storm * 3.5 + w.rain * 1.2;
-      const x = Math.cos(c.angle) * c.radius + world.wind.x * 2;
-      const z = Math.sin(c.angle) * c.radius + world.wind.y * 2;
-      const y = c.y - stormDrop;
+      const x = c.x;
+      const z = c.z;
+      const r = Math.hypot(x, z);
+      const y = Math.max(4, cloudBase(r) + c.lift - stormDrop);
       c.pos.set(x, y, z);
 
-      const want = Math.max(smoothstep(c.threshold - 0.05, c.threshold + 0.15, w.cloud), c.rain > 0.01 ? 1 : 0);
+      const edge = 1 - smoothstep(SKY_R * 0.8, SKY_R, r);
+      const want = Math.max(smoothstep(c.threshold - 0.05, c.threshold + 0.15, w.cloud), c.rain > 0.01 ? 1 : 0) * edge * c.enter;
       c.vis = damp(c.vis, want, 0.6, dt);
       c.squish = Math.max(0, c.squish - dt * 2.2);
       c.rain = Math.max(0, c.rain - dt / 14);
+      // thin out rather than swallow the camera when it flies close
+      const near = smoothstep(5, 12, camera.position.distanceTo(c.pos) - 3 * c.scale);
 
       const g = c.mesh;
       if (g) {
         const wob = Math.sin(c.squish * 16) * c.squish * 0.18;
-        const breathe = 1 + Math.sin(t * 0.3 + c.angle * 5) * 0.03;
-        const s = c.scale * c.vis * (1 + w.storm * 0.4 + w.rain * 0.2);
+        const breathe = 1 + Math.sin(t * 0.3 + c.yaw * 5) * 0.03;
+        const s = c.scale * (0.35 + 0.65 * c.vis) * (1 + w.storm * 0.4 + w.rain * 0.2);
         g.position.set(x, y, z);
-        g.rotation.y = -c.angle + Math.PI / 2;
+        g.rotation.y = c.yaw;
         g.scale.set(s * (1 + wob) * breathe, s * (1 - wob) * breathe, s * (1 + wob * 0.5));
-        g.visible = c.vis > 0.02;
+        g.visible = c.vis * near > 0.02;
         const m = g.children[0] as Mesh | undefined;
-        if (m) m.raycast = c.vis > 0.3 ? Mesh.prototype.raycast : noRaycast;
+        if (m) m.raycast = c.vis > 0.3 && near > 0.5 ? Mesh.prototype.raycast : noRaycast;
       }
 
       // color: storms and personal grudges make clouds darker
@@ -472,7 +532,7 @@ function Clouds() {
       u.uLightDir.value.copy(atmo.lightDir);
       u.uFog.value.copy(atmo.fog);
       u.uFogDensity.value = atmo.fogDensity;
-      u.uOpacity.value = clamp(c.vis * 1.4);
+      u.uOpacity.value = clamp(c.vis * 1.4) * near;
 
       if (c.rain > 0.02) world.showers.push({ x, z, r: 2.4 * c.scale, i: c.rain });
     }
@@ -604,9 +664,12 @@ function Showers() {
     [],
   );
   const splashT = useRef(0);
+  const raining = useMemo<CloudState[]>(() => [], []);
 
   useFrame((_, dt) => {
-    const raining = cloudStates.filter((c) => c.rain > 0.02).sort((a, b) => b.rain - a.rain);
+    raining.length = 0;
+    for (const c of cloudStates) if (c.rain > 0.02) raining.push(c);
+    if (raining.length > 1) raining.sort((a, b) => b.rain - a.rain);
     slots.forEach((s, i) => {
       const c = raining[i];
       const u = s.mat.uniforms;

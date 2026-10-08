@@ -155,8 +155,11 @@ export const sfx = (name: string, pos?: Vector3, strength = 1, pitch = 1) =>
 export const RIPPLE_COUNT = 24;
 export const ripples = Array.from({ length: RIPPLE_COUNT }, () => new Vector4(0, 0, -100, 0));
 let rippleIdx = 0;
+/** when the newest sea ripple started, so the water shader can skip the ring loop on calm seas */
+export const rippleClock = { last: -100 };
 export function addRipple(x: number, z: number, strength: number) {
   ripples[rippleIdx].set(x, z, world.elapsed, strength);
+  rippleClock.last = world.elapsed;
   rippleIdx = (rippleIdx + 1) % RIPPLE_COUNT;
 }
 

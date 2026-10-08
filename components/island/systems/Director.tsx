@@ -22,9 +22,12 @@ export function Director() {
     if (dbg) {
       dbg.camera = camera;
       dbg.scene = scene;
+      dbg.gl = gl;
     }
     const el = gl.domElement;
     const move = (e: PointerEvent) => {
+      // during a pinch the two fingers alternate, which reads as huge jumps
+      if (!e.isPrimary) return;
       const p = ptr.current;
       const now = performance.now() / 1000;
       if (p.has) {
@@ -40,15 +43,28 @@ export function Director() {
       p.has = true;
       markInput();
     };
-    const down = () => markInput();
+    const down = (e: PointerEvent) => {
+      markInput();
+      // a fresh touch elsewhere is a jump, not a fling
+      if (e.pointerType !== "mouse") ptr.current.has = false;
+    };
+    const wheel = () => markInput();
+    const lift = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") ptr.current.has = false;
+    };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerdown", down);
-    el.addEventListener("wheel", down, { passive: true });
+    el.addEventListener("pointerup", lift);
+    const leave = () => (ptr.current.has = false);
+    el.addEventListener("pointerleave", leave);
+    el.addEventListener("wheel", wheel, { passive: true });
     const offW = on("weather", ({ kind }) => setWeather(kind));
     return () => {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerdown", down);
-      el.removeEventListener("wheel", down);
+      el.removeEventListener("pointerup", lift);
+      el.removeEventListener("pointerleave", leave);
+      el.removeEventListener("wheel", wheel);
       offW();
     };
   }, [gl, camera, scene]);

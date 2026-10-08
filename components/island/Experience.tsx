@@ -1,8 +1,9 @@
 "use client";
 
-import { Bvh } from "@react-three/drei";
-import { Canvas } from "@react-three/fiber";
-import { Suspense } from "react";
+import { Bvh, PerformanceMonitor } from "@react-three/drei";
+import { Canvas, type RootState } from "@react-three/fiber";
+import { Suspense, useCallback, useState } from "react";
+import { IslandFallback } from "./ui/Fallback";
 import { ACESFilmicToneMapping, SRGBColorSpace } from "three";
 import { world } from "./lib/world";
 import { CameraRig } from "./systems/CameraRig";
@@ -32,15 +33,51 @@ import { Tools } from "./systems/Tools";
 import { Bubbles } from "./world/Bubbles";
 import { Sound } from "./systems/Sound";
 
+const MAX_DPR = Math.min(typeof window === "undefined" ? 1 : window.devicePixelRatio || 1, world.mobile ? 1.5 : 1.75);
+const MIN_DPR = Math.min(MAX_DPR, world.mobile ? 0.8 : 1);
+const dprFor = (factor: number) => Math.round((MIN_DPR + (MAX_DPR - MIN_DPR) * factor) * 8) / 8;
+
 export default function Experience() {
+  const [dpr, setDpr] = useState(MAX_DPR);
+  const [lost, setLost] = useState(false);
+
+  const onCreated = useCallback(({ gl }: RootState) => {
+    const el = gl.domElement;
+    el.addEventListener("webglcontextlost", (e) => {
+      // lets the browser hand the context back instead of killing it
+      e.preventDefault();
+      setLost(true);
+    });
+    el.addEventListener("webglcontextrestored", () => setLost(false));
+  }, []);
+
   return (
-    <Canvas
-      shadows
-      dpr={[1, world.mobile ? 1.5 : 1.75]}
-      camera={{ fov: 40, near: 0.1, far: 1200, position: [34, 26, 46] }}
-      gl={{ antialias: true, powerPreference: "high-performance", toneMapping: ACESFilmicToneMapping, outputColorSpace: SRGBColorSpace }}
-      style={{ position: "fixed", inset: 0, touchAction: "none" }}
-    >
+    <>
+      <Canvas
+        shadows
+        dpr={dpr}
+        camera={{ fov: 40, near: 0.1, far: 1200, position: [34, 26, 46] }}
+        gl={{ antialias: true, powerPreference: "high-performance", toneMapping: ACESFilmicToneMapping, outputColorSpace: SRGBColorSpace }}
+        style={{ position: "fixed", inset: 0, touchAction: "none" }}
+        onCreated={onCreated}
+      >
+        <PerformanceMonitor
+          factor={1}
+          step={0.2}
+          flipflops={4}
+          onChange={({ factor }) => setDpr(dprFor(factor))}
+          onFallback={() => setDpr(MIN_DPR)}
+        />
+        <Scene />
+      </Canvas>
+      {lost && <IslandFallback reason="lost" />}
+    </>
+  );
+}
+
+function Scene() {
+  return (
+    <>
       <Director />
       <Atmosphere />
       <Bvh firstHitOnly>
@@ -77,6 +114,6 @@ export default function Experience() {
       <Tools />
       <Sound />
       <CameraRig />
-    </Canvas>
+    </>
   );
 }

@@ -15,7 +15,8 @@ const DECK: StaticInfo = { kind: "dock" };
 function TerrainBody() {
   const [verts, idx] = useMemo(() => {
     const size = 56;
-    const seg = world.mobile ? 130 : 180;
+    // must match the grid (and diagonal) of the visible terrain mesh in Terrain.tsx
+    const seg = world.mobile ? 150 : 220;
     const n = seg + 1;
     const v = new Float32Array(n * n * 3);
     for (let j = 0; j < n; j++)
@@ -85,14 +86,13 @@ function hullPoints(c: Collider) {
 function ObstacleBody({ c }: { c: Collider }) {
   const info = useMemo<StaticInfo>(() => ({ kind: "obstacle", c }), [c]);
   const half = (c.top - c.bottom) / 2;
-  const tower = c.id === "lighthouse";
-  const pts = useMemo(() => (c.surface === "rock" && !tower ? hullPoints(c) : null), [c, tower]);
+  const pts = useMemo(() => c.hull ?? (c.surface === "rock" ? hullPoints(c) : null), [c]);
   return (
     <RigidBody type="fixed" colliders={false} userData={info} position={[c.x, 0, c.z]}>
       {c.surface === "leaf" ? (
-        <CylinderCollider sensor args={[half, c.r]} position={[0, c.bottom + half, 0]} />
+        pts ? <ConvexHullCollider sensor args={[pts]} /> : <CylinderCollider sensor args={[half, c.r]} position={[0, c.bottom + half, 0]} />
       ) : pts ? (
-        <ConvexHullCollider args={[pts]} friction={0.85} restitution={0.15} />
+        <ConvexHullCollider args={[pts]} friction={c.surface === "rock" ? 0.85 : 0.7} restitution={c.surface === "metal" ? 0.4 : 0.15} />
       ) : (
         <CylinderCollider args={[half, c.r]} position={[0, c.bottom + half, 0]} friction={0.7} restitution={c.surface === "metal" ? 0.4 : 0.15} />
       )}

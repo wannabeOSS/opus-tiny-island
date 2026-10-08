@@ -8,7 +8,8 @@
   --driftwood: #a88d6c;
   --lift: 0 4px 0 var(--ink);
   position: fixed;
-  inset: 0;
+  /* keep everything clear of notches, rounded corners and the home indicator */
+  inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   pointer-events: none;
   z-index: 10;
   color: var(--ink);
@@ -138,7 +139,7 @@
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  max-width: calc(100vw - 20px);
+  max-width: calc(100% - 20px);
 }
 
 .tray {
@@ -339,7 +340,7 @@
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  width: min(420px, calc(100vw - 32px));
+  width: min(420px, calc(100% - 32px));
 }
 
 .toast {
@@ -427,7 +428,7 @@
   top: 84px;
   right: 22px;
   width: 352px;
-  max-height: calc(100vh - 210px);
+  max-height: calc(100% - 210px);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 16px 22px 22px 44px;
@@ -759,6 +760,114 @@
   opacity: 0.9;
 }
 
+.credit {
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: 1.5px dashed rgb(36 51 47 / 0.25);
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.credit a {
+  color: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--lagoon);
+  text-underline-offset: 3px;
+  pointer-events: auto;
+}
+
+/* ---------------- fallback ---------------- */
+
+.fallback {
+  --ink: #24332f;
+  --tray-2: #eef3ea;
+  --paper: #fff7e8;
+  --lagoon: #3d8c86;
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--ink);
+  background: radial-gradient(circle at 50% 40%, #f7e6cf, #e6c9a6);
+}
+
+.fallbackCard {
+  max-width: 420px;
+  padding: 26px 28px 24px;
+  border: 2px solid var(--ink);
+  border-radius: 22px;
+  background: var(--paper);
+  box-shadow: 0 5px 0 var(--ink);
+  text-align: center;
+}
+
+.fallbackCard h2 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.fallbackCard p {
+  margin: 0 0 18px;
+  font-size: 15px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+
+.fallbackCard .btn {
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ---------------- signature ---------------- */
+
+.signature {
+  position: absolute;
+  right: 24px;
+  bottom: 22px;
+  padding: 4px 2px;
+  color: var(--ink);
+  font-size: 14px;
+  text-decoration: none;
+  opacity: 0.62;
+  pointer-events: auto;
+  text-shadow: 0 1px 0 rgb(255 247 232 / 0.5);
+  transform: rotate(-2deg);
+  transition:
+    opacity 300ms ease,
+    color 1.2s ease;
+}
+
+.signature b {
+  font-weight: 500;
+  background: linear-gradient(var(--lantern), var(--lantern)) 0 100% / 100% 2px no-repeat;
+}
+
+.signature:hover,
+.signature:focus-visible {
+  opacity: 1;
+}
+
+.signature:focus-visible {
+  outline: 2.5px dashed var(--lagoon);
+  outline-offset: 3px;
+}
+
+.hud[data-night] .signature {
+  color: var(--paper);
+  text-shadow: 0 2px 12px rgb(15 25 30 / 0.5);
+}
+
+/* the tray owns the bottom edge on narrower screens; the credit lives in the field notes there */
+@media (max-width: 1080px) {
+  .signature {
+    display: none;
+  }
+}
+
 /* ---------------- cursor ---------------- */
 
 .cursor {
@@ -806,8 +915,8 @@
   }
 
   .dock {
-    bottom: max(12px, env(safe-area-inset-bottom));
-    width: calc(100vw - 16px);
+    bottom: 12px;
+    width: calc(100% - 16px);
   }
 
   .tray {
@@ -838,7 +947,7 @@
     right: 8px;
     bottom: 96px;
     width: auto;
-    max-height: 62vh;
+    max-height: 62%;
     padding-left: 40px;
   }
 

@@ -79,11 +79,18 @@ class Pool {
     this.alpha[i] = 0.001;
     this.amax[i] = o.alpha ?? 1;
     this.wind[i] = o.wind ?? 0;
+    this.colorDirty = true;
+    this.wasLive = true;
   }
+  colorDirty = false;
+  /** whether last frame had anything alive (one more upload is needed to hide the final particles) */
+  wasLive = false;
   update(dt: number) {
+    if (!this.wasLive) return;
     const { pos, vel, life, max, size, alpha, base, grow, grav, drag, wind, amax } = this;
     const wx = world.wind.x;
     const wz = world.wind.y;
+    let live = 0;
     for (let i = 0; i < this.n; i++) {
       if (life[i] >= max[i]) {
         if (alpha[i] !== 0) {
@@ -92,6 +99,7 @@ class Pool {
         }
         continue;
       }
+      live++;
       life[i] += dt;
       const t = life[i] / max[i];
       const k = Math.exp(-drag[i] * dt);
@@ -107,7 +115,11 @@ class Pool {
     (this.geo.attributes.position as BufferAttribute).needsUpdate = true;
     (this.geo.attributes.aSize as BufferAttribute).needsUpdate = true;
     (this.geo.attributes.aAlpha as BufferAttribute).needsUpdate = true;
-    (this.geo.attributes.aColor as BufferAttribute).needsUpdate = true;
+    if (this.colorDirty) {
+      (this.geo.attributes.aColor as BufferAttribute).needsUpdate = true;
+      this.colorDirty = false;
+    }
+    this.wasLive = live > 0;
   }
 }
 

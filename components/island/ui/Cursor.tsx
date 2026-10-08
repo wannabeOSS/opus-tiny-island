@@ -87,10 +87,14 @@ export function Cursor() {
         spin += 2 + world.windStrength * 6 + (active ? Math.min(40, drag / 60) : 0);
         rotor.current?.setAttribute("transform", `rotate(${spin % 360} 16 12.5)`);
       }
-      d.style.opacity = pos.show ? "1" : "0";
-      d.style.transform = `translate3d(${pos.x - hx}px, ${pos.y - hy}px, 0) rotate(${rot}deg) scale(${press})`;
-      d.style.transformOrigin = `${hx}px ${hy}px`;
+      const opacity = pos.show ? "1" : "0";
+      const transform = `translate3d(${pos.x - hx}px, ${pos.y - hy}px, 0) rotate(${rot.toFixed(2)}deg) scale(${press})`;
+      const origin = `${hx}px ${hy}px`;
+      if (opacity !== written.opacity) d.style.opacity = written.opacity = opacity;
+      if (transform !== written.transform) d.style.transform = written.transform = transform;
+      if (origin !== written.origin) d.style.transformOrigin = written.origin = origin;
     };
+    const written = { opacity: "", transform: "", origin: "" };
     window.addEventListener("pointermove", move, { passive: true });
     window.addEventListener("pointerdown", move, { passive: true });
     document.addEventListener("pointerleave", leave);

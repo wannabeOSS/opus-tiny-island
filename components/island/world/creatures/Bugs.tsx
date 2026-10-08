@@ -23,6 +23,9 @@ import { toolState } from "../../lib/tools";
 import { U, idleSeconds, on, world } from "../../lib/world";
 import { flowerSpots } from "../Flora";
 
+const flyTmp = new Vector3();
+const flyTo = new Vector3();
+
 /* ---------------- butterflies ---------------- */
 
 function wingShape() {
@@ -129,10 +132,10 @@ function Butterflies() {
             f.timer = 5 + Math.random() * 6;
           }
         }
-        if (f.state === "follow") f.target.copy(world.pointer).add(new Vector3(Math.sin(t * 1.3 + i) * 0.35, 0.45, Math.cos(t * 1.1 + i) * 0.35));
+        if (f.state === "follow") f.target.copy(world.pointer).add(flyTmp.set(Math.sin(t * 1.3 + i) * 0.35, 0.45, Math.cos(t * 1.1 + i) * 0.35));
         // dancing in the sunbeam
-        if (f.state === "beam") f.target.copy(toolState.point).add(new Vector3(Math.sin(t * 1.7 + i * 2) * 0.45, 0.35 + Math.sin(t * 2.3 + i) * 0.2, Math.cos(t * 1.5 + i * 2) * 0.45));
-        const to = f.target.clone().sub(f.pos);
+        if (f.state === "beam") f.target.copy(toolState.point).add(flyTmp.set(Math.sin(t * 1.7 + i * 2) * 0.45, 0.35 + Math.sin(t * 2.3 + i) * 0.2, Math.cos(t * 1.5 + i * 2) * 0.45));
+        const to = flyTo.copy(f.target).sub(f.pos);
         const d = to.length();
         to.normalize().multiplyScalar(f.state === "follow" || f.state === "beam" ? 2.2 : 1.6);
         f.vel.lerp(to, Math.min(1, dt * 1.6));

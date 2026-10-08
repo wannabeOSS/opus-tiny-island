@@ -303,7 +303,7 @@ const PropView = memo(function PropView({ p, assets, opened }: { p: Prop; assets
         {p.kind === "apple" && <mesh geometry={assets.geo.stem} material={assets.mat.stem} position={[0, 0.08, 0]} />}
         {p.kind === "bottle" && !opened && (
           <>
-            <mesh geometry={assets.geo.cork} material={assets.mat.cork} position={[0.14, 0, 0]} />
+            <mesh geometry={assets.geo.cork} material={assets.mat.cork} position={[-0.14, 0, 0]} />
             <mesh geometry={assets.geo.paper} material={assets.mat.paper} />
             <mesh geometry={assets.geo.seed} material={assets.mat.seed[0]} position={[-0.03, -0.02, 0]} scale={0.5} />
           </>
@@ -325,10 +325,11 @@ function groundAt(x: number, z: number) {
 }
 
 const tmpN = new Vector3();
-const up = new Vector3(0, 1, 0);
 const tmpQ = new Quaternion();
 const axis = new Vector3();
 const tmpV = new Vector3();
+const holdVel = new Vector3();
+const holdSpin = { x: 0, y: 1.5, z: 0 };
 
 type Ground = "sand" | "grass" | "rock" | "wood";
 function surfaceOf(x: number, z: number, y: number): Ground {
@@ -500,6 +501,7 @@ export function Props() {
     downAt: 0,
     downXY: new Vector2(),
     moved: false,
+    pointerId: -1,
   });
   const ray = useMemo(() => new Raycaster(), []);
   const ndc = useMemo(() => new Vector2(), []);
@@ -510,10 +512,14 @@ export function Props() {
   const spawn = (kind: PropKind, pos: Vector3, vel?: Vector3, opts?: { float?: boolean; spin?: boolean }) => {
     const p = makeProp(kind, pos, vel, opts);
     props.push(p);
-    // keep it light: retire the oldest ordinary prop that's lying still
+    // keep it light: retire the oldest ordinary prop, preferring ones lying still or long adrift
     const live = props.filter((q) => q.state !== "dead");
     if (live.length > 36) {
-      const victim = live.find((q) => q.state === "dyn" && q.kind !== "seed" && q.kind !== "bottle" && q.body?.isSleeping());
+      const ok = (q: Prop) => q !== p && q.kind !== "seed" && q.kind !== "bottle";
+      const victim =
+        live.find((q) => ok(q) && q.state === "dyn" && q.body?.isSleeping()) ??
+        live.find((q) => ok(q) && q.state === "float" && q.age > 20) ??
+        live.find((q) => ok(q) && q.state === "dyn");
       if (victim) victim.state = "dead";
     }
     sync();
@@ -548,11 +554,13 @@ export function Props() {
   };
 
   const grab = (p: Prop, e: ThreeEvent<PointerEvent>) => {
-    if (p.state === "dead" || p.state === "sink" || !p.body) return;
+    const d = drag.current;
+    // one thing at a time: a second finger must not orphan the first prop mid-air
+    if (d.prop || p.state === "dead" || p.state === "sink" || !p.body) return;
     e.stopPropagation();
     markInput();
-    const d = drag.current;
     d.prop = p;
+    d.pointerId = e.nativeEvent.pointerId;
     d.moved = false;
     d.downAt = world.elapsed;
     d.downXY.set(e.nativeEvent.clientX, e.nativeEvent.clientY);
@@ -565,9 +573,10 @@ export function Props() {
     d.hist = [];
     world.holding = true;
     p.state = "held";
-    const r = p.body.rotation();
-    p.quat.set(r.x, r.y, r.z, r.w);
-    p.body.setBodyType(KINEMATIC, true);
+    // carried as a weightless dynamic body steered by velocity, so it bumps into the world
+    // instead of passing through cabins and rocks or batting other props away with infinite mass
+    p.body.setBodyType(DYNAMIC, true);
+    p.body.setGravityScale(0, true);
     lockCursor("grabbing");
     if (controls) (controls as unknown as { enabled: boolean }).enabled = false;
     sfx("pick", p.pos, 0.5, 1 + Math.random() * 0.2);
@@ -581,7 +590,10 @@ export function Props() {
 
   useEffect(() => {
     const dbg = (window as unknown as { __island?: Record<string, unknown> }).__island;
-    if (dbg) dbg.props = props;
+    if (dbg) {
+      dbg.props = props;
+      dbg.propApi = api;
+    }
   }, []);
 
   // external spawns and gusts
@@ -616,7 +628,7 @@ export function Props() {
     const el = gl.domElement;
     const move = (e: PointerEvent) => {
       const d = drag.current;
-      if (!d.prop) return;
+      if (!d.prop || e.pointerId !== d.pointerId) return;
       const rect = el.getBoundingClientRect();
       ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
       ray.setFromCamera(ndc, camera);
@@ -624,18 +636,20 @@ export function Props() {
       if (ray.ray.intersectPlane(d.plane, hit)) d.target.copy(hit);
       if (Math.hypot(e.clientX - d.downXY.x, e.clientY - d.downXY.y) > 6) d.moved = true;
     };
-    const upH = () => {
+    const upH = (e?: PointerEvent | FocusEvent) => {
       const d = drag.current;
       const p = d.prop;
       if (!p) return;
+      if (e && "pointerId" in e && e.pointerId !== d.pointerId) return;
       d.prop = null;
+      d.pointerId = -1;
       world.holding = false;
       lockCursor(null);
       if (controls) (controls as unknown as { enabled: boolean }).enabled = true;
       const b = p.body;
       p.state = "dyn";
       if (!b) return;
-      b.setBodyType(DYNAMIC, true);
+      b.setGravityScale(1, true);
       if (!d.moved && world.elapsed - d.downAt < 0.35) {
         b.setLinvel({ x: 0, y: 0, z: 0 }, true);
         tapProp(p);
@@ -668,10 +682,15 @@ export function Props() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", upH);
     window.addEventListener("pointercancel", upH);
+    window.addEventListener("blur", upH);
+    const onVis = () => document.hidden && upH();
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", upH);
       window.removeEventListener("pointercancel", upH);
+      window.removeEventListener("blur", upH);
+      document.removeEventListener("visibilitychange", onVis);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, gl, controls]);
@@ -697,16 +716,16 @@ export function Props() {
       if (!b) continue;
       p.age += dt;
       if (p.state === "held" && p === d.prop) {
-        const k = 1 - Math.exp(-dt * 22);
         const ground = groundAt(d.target.x, d.target.z) + p.r + 0.05;
         if (d.target.y < ground) d.target.y = ground;
-        p.pos.lerp(d.target, k);
+        const tr = b.translation();
+        p.pos.set(tr.x, tr.y, tr.z);
+        // chase the hand with a velocity, so the solver still blocks it on anything solid
+        holdVel.subVectors(d.target, p.pos).multiplyScalar(18).clampLength(0, 16);
+        b.setLinvel(holdVel, true);
+        b.setAngvel(holdSpin, true);
         d.hist.push({ t, p: p.pos.clone() });
         while (d.hist.length > 2 && t - d.hist[0].t > 0.09) d.hist.shift();
-        tmpQ.setFromAxisAngle(up, dt * 1.5);
-        p.quat.premultiply(tmpQ);
-        b.setNextKinematicTranslation(p.pos);
-        b.setNextKinematicRotation(p.quat);
       } else if (p.state === "dyn") {
         const tr = b.translation();
         p.pos.set(tr.x, tr.y, tr.z);

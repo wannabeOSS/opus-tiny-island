@@ -16,7 +16,7 @@ import {
   BufferAttribute,
 } from "three";
 import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { addCollider } from "../lib/colliders";
+import { addCollider, ringHull } from "../lib/colliders";
 import { merge, place, prep } from "../lib/geo";
 import { BOUNCY_MUSHROOM, FLOWER_PATCHES, OLD_TREE, ROUND_TREES, SEA_STACKS, CLIFF } from "../lib/layout";
 import { mulberry32, noise2, smoothstep } from "../lib/math";
@@ -131,8 +131,13 @@ export function Flowers() {
     dummy.scale.setScalar(Math.max(0.001, f.s * ease * budScale));
     if (f.sprout !== undefined) dummy.scale.x *= 0.7;
     dummy.updateMatrix();
-    mesh.current!.setMatrixAt(i, dummy.matrix);
-    mesh.current!.setColorAt(i, f.sprout === undefined ? f.color : BUD);
+    const m = mesh.current!;
+    m.setMatrixAt(i, dummy.matrix);
+    m.setColorAt(i, f.sprout === undefined ? f.color : BUD);
+    if (!dirty.current) {
+      m.instanceMatrix.addUpdateRange(i * 16, 16);
+      m.instanceColor?.addUpdateRange(i * 3, 3);
+    }
   };
 
   useEffect(() => {
@@ -248,12 +253,16 @@ export function Flowers() {
     if (lastCount.current !== flowers.length) {
       lastCount.current = flowers.length;
       m.count = flowers.length;
-      any = true;
+      dirty.current = any = true;
     }
     if (any) {
+      if (dirty.current) {
+        m.instanceMatrix.clearUpdateRanges();
+        m.instanceColor?.clearUpdateRanges();
+        m.computeBoundingSphere();
+      }
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
-      m.computeBoundingSphere();
     }
     dirty.current = false;
   });
@@ -278,7 +287,6 @@ export function Flowers() {
       args={[geo, mat, MAX_FLOWERS]}
       onClick={onClick}
       {...hoverable("pointer")}
-      castShadow
       receiveShadow
     />
   );
@@ -299,6 +307,8 @@ const SHROOMS: Shroom[] = [
   { x: ROUND_TREES[0].x - 0.5, z: ROUND_TREES[0].z + 0.5, s: 0.7, red: false, tilt: 0.1 },
 ];
 
+const spotMat = new MeshStandardMaterial({ color: "#fff8ea", roughness: 0.6 });
+
 function Mushroom({ m, i }: { m: Shroom; i: number }) {
   const ref = useRef<Object3D>(null);
   const capMat = useRef<MeshStandardMaterial>(null);
@@ -311,28 +321,59 @@ function Mushroom({ m, i }: { m: Shroom; i: number }) {
   }, []);
   const spots = useMemo(() => {
     const rnd = mulberry32(i * 13 + 5);
-    return Array.from({ length: m.red ? 6 : 3 }, () => {
-      const a = rnd() * Math.PI * 2;
-      const el = 0.35 + rnd() * 0.7;
-      return new Vector3(Math.cos(a) * Math.sin(el) * 0.11, Math.cos(el) * 0.11 * 0.75 + 0.002, Math.sin(a) * Math.sin(el) * 0.11);
-    });
+    return merge(
+      Array.from({ length: m.red ? 6 : 3 }, () => {
+        const a = rnd() * Math.PI * 2;
+        const el = 0.35 + rnd() * 0.7;
+        return place(new SphereGeometry(0.013, 6, 4), [
+          Math.cos(a) * Math.sin(el) * 0.11,
+          Math.cos(el) * 0.11 * 0.75 + 0.102,
+          Math.sin(a) * Math.sin(el) * 0.11,
+        ]);
+      }),
+    );
   }, [i, m.red]);
+  useEffect(
+    () => () => {
+      capGeo.dispose();
+      spots.dispose();
+    },
+    [capGeo, spots],
+  );
 
   useEffect(() => {
     if (!m.red || m.s < 1.5) return;
-    return addCollider({
+    // matches the cap: 0.11 sphere squashed to 0.75, cut just below its equator, sat at 0.1
+    const s = m.s;
+    const g = y - 0.01;
+    const offCap = addCollider({
       id: "mushroom-bouncy",
       x: m.x,
       z: m.z,
-      r: 0.2 * m.s,
-      bottom: y,
-      top: y + 0.3 * m.s,
+      r: 0.11 * s,
+      bottom: g + 0.087 * s,
+      top: g + 0.1825 * s,
       surface: "mush",
       bounce: 9,
+      hull: ringHull(
+        [
+          [0.108 * s, g + 0.087 * s],
+          [0.11 * s, g + 0.1 * s],
+          [0.095 * s, g + 0.141 * s],
+          [0.055 * s, g + 0.171 * s],
+          [0.01 * s, g + 0.1825 * s],
+        ],
+        14,
+      ),
       onHit: () => {
         squish.current = 1;
       },
     });
+    const offStem = addCollider({ id: "mushroom-stem", x: m.x, z: m.z, r: 0.04 * s, bottom: g, top: g + 0.1 * s, surface: "wood" });
+    return () => {
+      offCap();
+      offStem();
+    };
   }, [m, y]);
 
   useFrame((_, dt) => {
@@ -374,12 +415,7 @@ function Mushroom({ m, i }: { m: Shroom; i: number }) {
           roughness={0.55}
         />
       </mesh>
-      {spots.map((p, k) => (
-        <mesh key={k} position={[p.x, p.y + 0.1, p.z]}>
-          <sphereGeometry args={[0.013, 6, 4]} />
-          <meshStandardMaterial color="#fff8ea" roughness={0.6} />
-        </mesh>
-      ))}
+      <mesh geometry={spots} material={spotMat} />
     </group>
   );
 }
@@ -473,7 +509,17 @@ export function Rocks() {
     return out;
   }, []);
 
-  const geos = useMemo(() => rocks.map((r) => rockGeo(r.seed, r.r, r.squash, r.tone, r.moss ?? 0)), [rocks]);
+  // static, so all of them go out in one draw call
+  const merged = useMemo(
+    () =>
+      merge(
+        rocks.map((r) =>
+          place(rockGeo(r.seed, r.r, r.squash, r.tone, r.moss ?? 0), [r.x, groundMin(r.x, r.z, r.r * 0.8) - (r.sink ?? 0.04) - r.r * 0.08, r.z], [0, r.seed, 0]),
+        ),
+      ),
+    [rocks],
+  );
+  useEffect(() => () => merged.dispose(), [merged]);
 
   useEffect(() => {
     const offs = rocks.map((r, i) =>
@@ -484,17 +530,7 @@ export function Rocks() {
 
   return (
     <group>
-      {rocks.map((r, i) => (
-        <mesh
-          key={i}
-          geometry={geos[i]}
-          material={rockMat}
-          position={[r.x, groundMin(r.x, r.z, r.r * 0.8) - (r.sink ?? 0.04) - r.r * 0.08, r.z]}
-          rotation-y={r.seed}
-          castShadow
-          receiveShadow
-        />
-      ))}
+      <mesh geometry={merged} material={rockMat} castShadow receiveShadow />
       <SeaStacks />
     </group>
   );

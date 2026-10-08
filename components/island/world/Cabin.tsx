@@ -106,10 +106,39 @@ export function Cabin() {
   const roofAng = Math.atan2(PEAK + 0.12, W / 2 + 0.18);
 
   useEffect(() => {
-    const off = addCollider({ id: "cabin", x: CABIN.x, z: CABIN.z, r: 0.95, bottom: y0, top: y0 + BASE + WALL + PEAK * 0.8, surface: "wood" });
     const rot = CABIN.rot;
     const toWorld = (lx: number, ly: number, lz: number) =>
       new Vector3(CABIN.x + lx * Math.cos(rot) + lz * Math.sin(rot), y0 + ly, CABIN.z - lx * Math.sin(rot) + lz * Math.cos(rot));
+    // hull points in the collider's frame: local layout rotated, y in world space
+    const hull = (pts: [number, number, number][], ox = 0, oz = 0) =>
+      new Float32Array(
+        pts.flatMap(([lx, ly, lz]) => [(lx - ox) * Math.cos(rot) + (lz - oz) * Math.sin(rot), y0 + ly, -(lx - ox) * Math.sin(rot) + (lz - oz) * Math.cos(rot)]),
+      );
+    const eave = BASE + WALL;
+    const house: [number, number, number][] = [];
+    for (const sz of [-1, 1]) {
+      house.push([-W / 2 - 0.06, -0.05, sz * (D / 2 + 0.06)], [W / 2 + 0.06, -0.05, sz * (D / 2 + 0.06)]);
+      house.push([-W / 2 - 0.18, eave, sz * (D / 2 + 0.18)], [W / 2 + 0.18, eave, sz * (D / 2 + 0.18)]);
+      house.push([0, eave + PEAK + 0.11, sz * (D / 2 + 0.18)]);
+    }
+    const chimney: [number, number, number][] = [];
+    for (const [cx, cz] of [[0.36, -0.42], [0.6, -0.42], [0.36, -0.18], [0.6, -0.18]] as const)
+      chimney.push([cx, eave + PEAK * 0.5, cz], [cx, eave + PEAK + 0.36, cz]);
+    const chim = toWorld(0.48, 0, -0.3);
+    const offs = [
+      addCollider({ id: "cabin", x: CABIN.x, z: CABIN.z, r: 0.95, bottom: y0, top: y0 + eave + PEAK, surface: "wood", hull: hull(house) }),
+      addCollider({
+        id: "cabin-chimney",
+        x: chim.x,
+        z: chim.z,
+        r: 0.17,
+        bottom: y0 + eave,
+        top: y0 + eave + PEAK + 0.36,
+        surface: "rock",
+        hull: hull(chimney, 0.48, -0.3),
+      }),
+    ];
+    const off = () => offs.forEach((o) => o());
     const perches = [
       { id: "roof-front", pos: toWorld(0, BASE + WALL + PEAK + 0.06, D / 2 - 0.1), taken: false },
       { id: "roof-back", pos: toWorld(0, BASE + WALL + PEAK + 0.06, -D / 2 + 0.2), taken: false },

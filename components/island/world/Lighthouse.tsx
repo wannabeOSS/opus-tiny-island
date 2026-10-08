@@ -14,7 +14,7 @@ import {
   ShaderMaterial,
   Vector3,
 } from "three";
-import { addCollider } from "../lib/colliders";
+import { addCollider, ringHull } from "../lib/colliders";
 import { LIGHTHOUSE } from "../lib/layout";
 import { damp, noise2 } from "../lib/math";
 import { patchMaterial } from "../lib/patch";
@@ -125,7 +125,21 @@ export function Lighthouse() {
   }, []);
 
   useEffect(() => {
-    const off = addCollider({ id: "lighthouse", x: LIGHTHOUSE.x, z: LIGHTHOUSE.z, r: 0.66, bottom: y0, top: y0 + LAMP_Y + 0.6, surface: "rock" });
+    const at = { x: LIGHTHOUSE.x, z: LIGHTHOUSE.z };
+    const offs = [
+      addCollider({ ...at, id: "lighthouse-base", r: 0.95, bottom: y0 - 0.3, top: y0 + 0.19, surface: "rock", hull: ringHull([[0.95, y0 - 0.3], [0.85, y0 + 0.19]], 16) }),
+      addCollider({ ...at, id: "lighthouse", r: 0.62, bottom: y0, top: y0 + TOWER_H, surface: "rock", hull: ringHull([[0.63, y0], [0.41, y0 + TOWER_H]], 16) }),
+      addCollider({
+        ...at,
+        id: "lighthouse-gallery",
+        r: 0.66,
+        bottom: y0 + TOWER_H - 0.01,
+        top: y0 + LAMP_Y + 0.6,
+        surface: "metal",
+        hull: ringHull([[0.66, y0 + TOWER_H - 0.01], [0.64, y0 + TOWER_H + 0.3], [0.44, y0 + LAMP_Y + 0.24], [0.04, y0 + LAMP_Y + 0.6]], 16),
+      }),
+    ];
+    const off = () => offs.forEach((o) => o());
     const perch = { id: "lighthouse", pos: new Vector3(LIGHTHOUSE.x + 0.55, y0 + TOWER_H + 0.12, LIGHTHOUSE.z + 0.2), taken: false };
     world.perches.push(perch);
     return () => {

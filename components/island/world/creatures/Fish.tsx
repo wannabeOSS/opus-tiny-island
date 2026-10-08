@@ -43,7 +43,11 @@ type Fish = {
   retarget: number;
   /** the bubble this fish is leaping for */
   prey: Bubble | null;
+  /** horizontal length of the current leap */
+  leap: number;
 };
+
+const LEAP = 1.3;
 
 type Food = { pos: Vector3; left: number; pond: boolean; t: number };
 
@@ -83,11 +87,22 @@ function validSea(x: number, z: number) {
   return h < -0.35 && h > -2.4 && Math.hypot(x, z) < 21;
 }
 
+/** start a leap only if it comes down in open water; otherwise the fish strands itself */
+function tryLeap(f: Fish, heading: number, length = LEAP) {
+  if (!validSea(f.x + Math.sin(heading) * length, f.z + Math.cos(heading) * length)) return false;
+  f.heading = heading;
+  f.leap = length;
+  f.jx = f.x;
+  f.jz = f.z;
+  f.jump = 0.0001;
+  return true;
+}
+
 /** A bubble drifting low over the sea near this fish, worth swimming under. */
 function lureFor(f: Fish) {
   for (const b of bubbles) {
     if (b.dead || b.hunted || b.pos.y > 1.05) continue;
-    if (Math.hypot(b.pos.x - f.x, b.pos.z - f.z) < 6 && height(b.pos.x, b.pos.z) < -0.5) return b;
+    if (Math.hypot(b.pos.x - f.x, b.pos.z - f.z) < 6 && validSea(b.pos.x, b.pos.z)) return b;
   }
   return null;
 }
@@ -101,11 +116,7 @@ function fed(f: Fish, at: Vector3) {
   f.golden = true;
   f.size = 0.34;
   f.color.copy(GOLD);
-  if (f.jump <= 0) {
-    f.jump = 0.0001;
-    f.jx = f.x;
-    f.jz = f.z;
-  }
+  if (f.jump <= 0 && !tryLeap(f, f.heading)) tryLeap(f, f.heading + Math.PI);
   spawnSparkle(new Vector3(f.x, 0.2, f.z), 24, GOLD, 0.6, 1);
   sfx("sparkle", at, 0.8);
   discover("goldfish");
@@ -138,7 +149,7 @@ export function Fish() {
         x, z, y: -0.4, heading: rnd() * 6, speed: 0.5, tx: x, tz: z, flee: 0, jump: 0, jx: 0, jz: 0,
         size: 0.2 + rnd() * 0.12,
         color: new Color(seaCols[Math.floor(rnd() * seaCols.length)]),
-        golden: false, pond: false, retarget: 0, prey: null,
+        golden: false, pond: false, retarget: 0, prey: null, leap: LEAP,
       });
     }
     const koi = ["#f08a3c", "#fbfbf6", "#e8502e"];
@@ -146,7 +157,7 @@ export function Fish() {
       const a = (i / POND_N) * Math.PI * 2;
       out.push({
         x: POND.x + Math.cos(a) * 0.5, z: POND.z + Math.sin(a) * 0.5, y: POND_LEVEL - 0.07, heading: a + 1.6, speed: 0.3,
-        tx: POND.x, tz: POND.z, flee: 0, jump: 0, jx: 0, jz: 0, size: 0.17, color: new Color(koi[i]), golden: false, pond: true, retarget: 0, prey: null,
+        tx: POND.x, tz: POND.z, flee: 0, jump: 0, jx: 0, jz: 0, size: 0.17, color: new Color(koi[i]), golden: false, pond: true, retarget: 0, prey: null, leap: LEAP,
       });
     }
     return out;
@@ -206,11 +217,7 @@ export function Fish() {
       s.jumpT = 9 + Math.random() * 16;
       const cands = fish.filter((f) => !f.pond && f.jump <= 0 && height(f.x, f.z) < -0.7);
       const f = cands[Math.floor(Math.random() * cands.length)];
-      if (f) {
-        f.jump = 0.0001;
-        f.jx = f.x;
-        f.jz = f.z;
-      }
+      if (f) tryLeap(f, f.heading);
     }
 
     // fish leap for bubbles drifting low over the water
@@ -230,12 +237,10 @@ export function Fish() {
           }
         }
         if (!best) continue;
+        // the top of the arc reaches the bubble, so the leap is twice as long as the gap
+        if (!tryLeap(best, Math.atan2(b.pos.x - best.x, b.pos.z - best.z), clamp(bd * 2, 0.5, 2.6))) continue;
         b.hunted = true;
         best.prey = b;
-        best.heading = Math.atan2(b.pos.x - best.x, b.pos.z - best.z);
-        best.jx = b.pos.x - Math.sin(best.heading) * 0.65;
-        best.jz = b.pos.z - Math.cos(best.heading) * 0.65;
-        best.jump = 0.0001;
         break;
       }
     }
@@ -246,8 +251,8 @@ export function Fish() {
         const prev = f.jump;
         f.jump += dt / 0.85;
         const p = Math.min(1, f.jump);
-        f.x = f.jx + Math.sin(f.heading) * p * 1.3;
-        f.z = f.jz + Math.cos(f.heading) * p * 1.3;
+        f.x = f.jx + Math.sin(f.heading) * p * f.leap;
+        f.z = f.jz + Math.cos(f.heading) * p * f.leap;
         f.y = -0.3 + Math.sin(p * Math.PI) * (0.75 + f.size);
         if (f.prey && prev < 0.5 && f.jump >= 0.5) {
           const b = f.prey;
@@ -255,7 +260,7 @@ export function Fish() {
           if (!b.dead && Math.hypot(b.pos.x - f.x, b.pos.z - f.z) < 0.7) {
             popBubble(b);
             fed(f, b.pos);
-          }
+          } else b.hunted = false;
         }
         if (prev < 0.12 && f.jump >= 0.12) {
           spawnSplash(new Vector3(f.x, 0, f.z), 0.25);
@@ -275,6 +280,8 @@ export function Fish() {
         let best = f.pond ? 3 : 9;
         for (const fd of foods) {
           if (fd.pond !== f.pond) continue;
+          // crumbs in the shallows are out of reach; chasing them only pins fish to the shore
+          if (!f.pond && !validSea(fd.pos.x, fd.pos.z)) continue;
           const d = Math.hypot(fd.pos.x - f.x, fd.pos.z - f.z);
           if (d < best) {
             best = d;
@@ -282,6 +289,7 @@ export function Fish() {
           }
         }
         f.retarget -= dt;
+        const lure = !target && !f.pond && f.flee <= 0 ? lureFor(f) : null;
         if (target && f.flee <= 0) {
           f.tx = target.pos.x;
           f.tz = target.pos.z;
@@ -294,10 +302,9 @@ export function Fish() {
             }
             if (target.left <= 0 && !f.pond) fed(f, target.pos);
           }
-        } else if (!f.pond && f.flee <= 0 && lureFor(f)) {
-          const b = lureFor(f)!;
-          f.tx = b.pos.x;
-          f.tz = b.pos.z;
+        } else if (lure) {
+          f.tx = lure.pos.x;
+          f.tz = lure.pos.z;
         } else if (gather.current && gather.current.until > t && gather.current.pond === f.pond && Math.hypot(gather.current.pos.x - f.x, gather.current.pos.z - f.z) < 10 && f.flee <= 0) {
           // circle round whoever blew the conch
           const gp = gather.current.pos;
@@ -347,6 +354,15 @@ export function Fish() {
             f.heading += Math.PI * 0.5 * dt * 4;
           }
           f.y = POND_LEVEL - 0.07;
+        } else if (!validSea(f.x, f.z)) {
+          // somehow outside the swimmable band: head straight back into it
+          const r = Math.hypot(f.x, f.z);
+          f.heading = r > 20 ? Math.atan2(-f.x, -f.z) : Math.atan2(f.x, f.z);
+          nx = f.x + Math.sin(f.heading) * f.speed * dt;
+          nz = f.z + Math.cos(f.heading) * f.speed * dt;
+          const depth = Math.max(0.05, -height(nx, nz));
+          f.y = waveHeight(nx, nz, t, depth) - clamp(depth * 0.35, 0.12, 0.6);
+          f.retarget = 0;
         } else {
           if (!validSea(nx, nz)) {
             f.heading += Math.PI * dt * 2.5;
@@ -385,8 +401,9 @@ export function Fish() {
     shadowMat.opacity = 0.2 * world.daylight * (1 - world.w.cloud * 0.5);
 
     // golden fish glitters now and then
-    const g = fish.find((f) => f.golden);
-    if (g && Math.random() < dt * 2) spawnSparkle(new Vector3(g.x, g.y + 0.1, g.z), 1, GOLD, 0.2, 0.3);
+    if (world.goldenFish && Math.random() < dt * 2) {
+      for (const g of fish) if (g.golden) spawnSparkle(new Vector3(g.x, g.y + 0.1, g.z), 1, GOLD, 0.2, 0.3);
+    }
   });
 
   return (
