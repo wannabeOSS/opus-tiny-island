@@ -2,6 +2,13 @@
   "name": "threejs",
   "version": "0.1.0",
   "private": true,
+  "description": "A tiny hand-made 3D island to poke at, built with three.js, React Three Fiber and Next.js.",
+  "license": "MIT",
+  "author": "Proxyy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wannabeOSS/opus-tiny-island.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
